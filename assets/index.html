@@ -3055,16 +3055,15 @@ Cevabının en başına yalnızca [onay] ya da [ret] yaz. Sonra Türkçe, sesli 
   const EXAM_LABEL = { "1-1": "1. dönem 1. yazılı", "1-2": "1. dönem 2. yazılı", "2-1": "2. dönem 1. yazılı", "2-2": "2. dönem 2. yazılı" };
   const NATIONAL = { "🔢 Matematik": { "1-1": "2026-11-11" }, "📝 Türkçe": { "2-2": "2027-06-08" } };
   // Şehit Fatih Soydan Ortaokulu 6. sınıf yazılı takvimi (okulun duyurusu), açıklandıkça eklenir.
-  const SCHOOL_DATES = { "📝 Türkçe": { "1-1": "2026-11-02" }, "🇬🇧 English": { "1-1": "2026-11-03" }, "🔬 Fen": { "1-1": "2026-11-04" }, "🌍 Sosyal": { "1-1": "2026-11-06" }, "🕌 Din Kültürü": { "1-1": "2026-11-02" } };
-  const EXAM_PERIOD = { "📝 Türkçe-1-1": "2. ders", "🇬🇧 English-1-1": "2. ders", "🔬 Fen-1-1": "5. ders", "🌍 Sosyal-1-1": "2. ders", "🕌 Din Kültürü-1-1": "5. ders" };
+  const SCHOOL_DATES = { "🔬 Fen": { "1-1": "2026-11-03" }, "🌍 Sosyal": { "1-1": "2026-11-06" }, "📝 Türkçe": { "1-1": "2026-11-10" }, "🇬🇧 English": { "1-1": "2026-11-12" }, "🕌 Din Kültürü": { "1-1": "2026-11-13" } };
+  const EXAM_PERIOD = { "🔬 Fen-1-1": "5. ders", "🌍 Sosyal-1-1": "5. ders", "📝 Türkçe-1-1": "6. ders", "🇬🇧 English-1-1": "6. ders", "🕌 Din Kültürü-1-1": "6. ders" };
   // Other lessons' exams: shown with date only.
   const OTHER_EXAMS = [
-    ["Matematik ve Bilim Uygulamaları", "2026-11-03", "5. ders"],
-    ["Teknoloji Tasarım / Bilişim", "2026-11-04", "2. ders"], ["Kültür ve Medeniyet", "2026-11-05", "2. ders"],
-    ["Beden Eğitimi", "2026-11-05", "5. ders"], ["Ahlak ve Yurttaşlık", "2026-11-06", "5. ders"],
-    ["Sportif Etkinlikler", "2026-11-09", "3. ders"], ["Müzik", "2026-11-09", "6. ders"],
-    ["Peygamberimizin Hayatı", "2026-11-12", "3. ders"], ["Proje Uygulamaları", "2026-11-12", "6. ders"],
-    ["Görgü Kuralları ve Nezaket", "2026-11-13", "3. ders"]
+    ["Teknoloji Tasarım / Bilişim", "2026-11-02", "2. ders"], ["Ahlak ve Yurttaşlık", "2026-11-02", "5. ders"],
+    ["Peygamberimizin Hayatı", "2026-11-03", "2. ders"], ["Matematik ve Bilim Uygulamaları", "2026-11-04", "2. ders"],
+    ["Kültür ve Medeniyet", "2026-11-04", "5. ders"], ["Proje Uygulamaları", "2026-11-05", "2. ders"],
+    ["Sportif Etkinlikler", "2026-11-06", "2. ders"], ["Müzik", "2026-11-09", "3. ders"],
+    ["Görgü Kuralları ve Nezaket", "2026-11-09", "6. ders"], ["Beden Eğitimi", "2026-11-10", "3. ders"]
   ];
   // Which topics each exam covers, in teaching order (Maarif Modeli yıllık planına göre yaklaşık).
   const U = (subject, ...units) => units.flatMap((n) => Object.values(LESSONS[subject])[n - 1]);
