@@ -236,6 +236,11 @@ function robotSvg(opts = {}) {
     <radialGradient id="${id}tip" cx=".35" cy=".35" r=".7"><stop offset="0" stop-color="#ffffff"/><stop offset="1" style="stop-color:var(--ring)"/></radialGradient>
     <radialGradient id="${id}eye" cx=".5" cy=".4" r=".7"><stop offset="0" stop-color="#ffffff" stop-opacity=".9"/><stop offset=".35" style="stop-color:var(--eye)"/><stop offset="1" style="stop-color:var(--eye)"/></radialGradient>
     <clipPath id="${id}torso"><path d="${TORSO}"/></clipPath>
+    <radialGradient id="${id}sclera" cx=".5" cy=".45" r=".6"><stop offset="0" stop-color="#ffffff"/><stop offset=".75" stop-color="#eaf3f8"/><stop offset="1" stop-color="#b9cbd8"/></radialGradient>
+    <radialGradient id="${id}iris" cx=".5" cy=".5" r=".5"><stop offset="0" stop-color="#0b1622"/><stop offset=".4" style="stop-color:var(--eye)"/><stop offset=".8" style="stop-color:var(--eye)"/><stop offset="1" stop-color="#0b1622" stop-opacity=".85"/></radialGradient>
+    <linearGradient id="${id}lid" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#000" stop-opacity=".35"/><stop offset=".3" stop-color="#000" stop-opacity="0"/></linearGradient>
+    <clipPath id="${id}eyeclip84"><rect x="76" y="93" width="16" height="21" rx="7.5"/></clipPath>
+    <clipPath id="${id}eyeclip116"><rect x="108" y="93" width="16" height="21" rx="7.5"/></clipPath>
     <clipPath id="${id}mouth"><path class="mouth-clip" d="M88 135 Q100 143 112 135 Q100 143 88 135 Z"/></clipPath>
   </defs>
   <g transform="translate(100 88) scale(1.06) translate(-100 -104)">
@@ -267,15 +272,21 @@ function robotSvg(opts = {}) {
         <g class="brows" stroke="var(--eye)" stroke-width="3" stroke-linecap="round" fill="none">
           <path class="brow brow-l" d="M77 89 Q84 86.5 91 89"/><path class="brow brow-r" d="M109 89 Q116 86.5 123 89"/>
         </g>
-        <g class="eyes"><g class="pupils">
-          <rect class="eye" x="77" y="94" width="14" height="19" rx="6.5" fill="url(#${id}eye)"/>
-          <rect class="eye" x="109" y="94" width="14" height="19" rx="6.5" fill="url(#${id}eye)"/>
-          <circle cx="81.5" cy="99" r="2.4" fill="#fff"/><circle cx="113.5" cy="99" r="2.4" fill="#fff"/>
-          <circle cx="87" cy="108" r="1.1" fill="#fff" opacity=".8"/><circle cx="119" cy="108" r="1.1" fill="#fff" opacity=".8"/>
+        <g class="eyes">
+          ${[84, 116].map((x) => `<g class="eye">
+            <rect x="${x - 8}" y="93" width="16" height="21" rx="7.5" fill="url(#${id}sclera)"/>
+            <g clip-path="url(#${id}eyeclip${x})"><g class="pupils">
+              <circle cx="${x}" cy="104" r="6.6" fill="url(#${id}iris)"/>
+              <circle cx="${x}" cy="104" r="6.6" fill="none" stroke="#06121c" stroke-opacity=".55" stroke-width="1"/>
+              <circle class="pupil" cx="${x}" cy="104" r="3" fill="#050a12"/>
+              <circle cx="${x + 2.2}" cy="101.4" r="1.7" fill="#fff"/><circle cx="${x - 2.2}" cy="106.6" r=".8" fill="#fff" opacity=".8"/>
+            </g></g>
+            <rect x="${x - 8}" y="93" width="16" height="21" rx="7.5" fill="url(#${id}lid)"/>
+          </g>`).join("")}
           <g stroke="var(--eye)" stroke-width="1.8" stroke-linecap="round">
-            <path d="M78 97 L74 93.5"/><path d="M80 95 L78 90.5"/><path d="M122 97 L126 93.5"/><path d="M120 95 L122 90.5"/>
+            <path d="M77 97 L73 93.5"/><path d="M79 94.5 L77 90"/><path d="M123 97 L127 93.5"/><path d="M121 94.5 L123 90"/>
           </g>
-        </g></g>
+        </g>
         <g class="sleep-eyes" stroke="var(--eye)" stroke-width="3.5" stroke-linecap="round" fill="none">
           <path d="M77 105 Q84 110 91 105"/><path d="M109 105 Q116 110 123 105"/>
           <path d="M78 106 L75 109.5" stroke-width="1.8"/><path d="M122 106 L125 109.5" stroke-width="1.8"/>

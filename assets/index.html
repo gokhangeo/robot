@@ -740,6 +740,10 @@
         <div><label for="auto">Sürekli sohbet</label>
           <select id="auto"><option value="1">Açık</option><option value="0">Kapalı</option></select></div>
       </div>
+      <div class="row">
+        <div><label for="watch">Gözleriyle beni takip etsin (ön kamera)</label>
+          <select id="watch"><option value="1">Açık</option><option value="0">Kapalı</option></select></div>
+      </div>
 
       <h3>Ekranda gezen robot</h3>
       <label for="overlay">Robot diğer uygulamaların üstünde gezsin</label>
@@ -3389,6 +3393,7 @@ Soru tarzı ve beklenen cevaplar: insanın vahye neden ihtiyaç duyduğu ve vahy
     $("morningTime").value = c.morning; $("eveningTime").value = c.evening;
     $("parentRules").value = A.get("parentRules", "");
     $("grade").value = c.grade; $("auto").value = c.auto ? "1" : "0"; $("fx").value = c.fx ? "1" : "0";
+    $("watch").value = A.get("watch", "1");
     $("overlay").value = A.overlayOn() ? "1" : "0";
     const [r, p, v] = A.getVoice().split(","); $("rate").value = r; $("pitch").value = p;
     fillVoices(v || "");
@@ -3416,6 +3421,7 @@ Soru tarzı ve beklenen cevaplar: insanın vahye neden ihtiyaç duyduğu ve vahy
     A.set("grade", $("grade").value);
     A.set("auto", $("auto").value);
     A.set("fx", $("fx").value);
+    A.set("watch", $("watch").value);
     A.setVoice($("rate").value, $("pitch").value, $("voice").value);
     saveCloudFields();
     const wantOverlay = $("overlay").value === "1";

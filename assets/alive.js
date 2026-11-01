@@ -12,7 +12,8 @@
   const body = document.body;
   const q = (s) => svg.querySelector(s);
   const mouth = q(".mouth"), mclip = q(".mouth-clip"), tongue = q(".tongue");
-  const pupils = q(".pupils"), eyes = q(".eyes"), look = q(".head-look"), antenna = q(".antenna");
+  const pupilsAll = [...svg.querySelectorAll(".pupils")], pupilDots = [...svg.querySelectorAll(".pupil")], eyes = q(".eyes"), look = q(".head-look"), antenna = q(".antenna");
+  const tip = antenna && antenna.querySelector(".antenna-tip"), tipY = tip ? +tip.getAttribute("cy") || 40 : 40;
   const browL = q(".brow-l"), browR = q(".brow-r"), brows = q(".brows");
   const accs = [...svg.querySelectorAll(".acc-sway")], glare = [...svg.querySelectorAll(".glare")];
   const glareBase = glare.map((g) => g.getAttribute("transform") || "");
@@ -30,9 +31,6 @@
     #disc .eyes { animation: none !important; }
     #disc .pupils { transition: none; }
     #disc .eye { transform-box: fill-box; transform-origin: center; transition: transform .28s cubic-bezier(.3,1.4,.5,1); }
-    #disc .eyes { filter: drop-shadow(0 0 3px var(--eye)); }
-    #disc .antenna { transition: filter .12s; }
-    #disc .head-group { filter: drop-shadow(0 5px 6px rgba(0,0,0,.28)); }
     body.listening #disc .head-group { animation-play-state: paused; }
     .botShadow { width: min(42vw, 200px, 27vh); height: 14px; margin: -8px 0 -6px; border-radius: 50%; pointer-events: none;
       background: radial-gradient(closest-side, rgba(0,0,0,.55), rgba(0,0,0,0)); animation: botShadow 4s ease-in-out infinite; }
@@ -263,7 +261,7 @@
   // ---------- gaze, blink, head ----------
   const gaze = { x: spring(0, 140, .62), y: spring(0, 140, .62) };
   const head = { x: spring(0, 60, .55), y: spring(0, 60, .55), tilt: spring(0, 50, .5) };
-  const sway = spring(0, 70, .25);
+  const sway = spring(0, 70, .25), pupil = spring(3, 80, .6);
   let lastPointer = 0, nextSaccade = 0, nextBlink = performance.now() + 2500, blinkStart = -1, blinkTwice = false;
   let level = 0, glow = 0, lastActivity = performance.now(), yawnUntil = 0, lastYawn = performance.now();
   let tiltX = 0, tiltY = 0;
@@ -287,6 +285,12 @@
   function saccade(now) {
     const s = st();
     if (now - lastPointer < 2500) return;
+    if (faceSeen(now)) {
+      // look straight at the child, with tiny natural flicks between their eyes
+      const flick = now > nextSaccade ? ((nextSaccade = now + 400 + Math.random() * 900), (Math.random() - .5) * .12) : 0;
+      gaze.x.t = Math.max(-1, Math.min(1, cam.x)) + flick; gaze.y.t = Math.max(-1, Math.min(1, cam.y));
+      return;
+    }
     if (now < nextSaccade) return;
     let x, y;
     if (s === "listening") { x = (Math.random() - .5) * .25; y = .15 + (Math.random() - .5) * .15; nextSaccade = now + 1200 + Math.random() * 1800; }
@@ -329,6 +333,72 @@
     }
   }
 
+  // ---------- watching the child through the front camera ----------
+  // A small face detector (MediaPipe, free, runs on the phone) finds the face; her eyes and head turn toward it.
+  // Turned off in Settings with "Gözleriyle beni takip etsin". The camera stops whenever anything else needs it.
+  const cam = { on: false, stream: null, video: null, det: null, busy: false, last: 0, seenAt: 0, lostAt: 0, x: 0, y: 0, failed: 0 };
+  function faceSeen(now) { return now - cam.seenAt < 600; }
+  const watchWanted = () => store.get("watch", "1") === "1";
+  const camAllowed = () => watchWanted() && !document.hidden && !sheetOpen() && !body.classList.contains("arOn")
+    && !body.classList.contains("sleeping") && !document.querySelector(".snap.show, .snap.open");
+  if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+    const orig = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
+    // any other camera use (photo, AR) first releases ours
+    navigator.mediaDevices.getUserMedia = (c) => { if (!cam.starting) stopCam(); return orig(c); };
+    cam.gum = orig;
+  }
+  async function loadDetector() {
+    if (cam.det) return cam.det;
+    const base = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14";
+    const mp = await import(base + "/vision_bundle.mjs");
+    const files = await mp.FilesetResolver.forVisionTasks(base + "/wasm");
+    cam.det = await mp.FaceDetector.createFromOptions(files, {
+      baseOptions: { modelAssetPath: "https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_short_range/float16/1/blaze_face_short_range.tflite", delegate: "CPU" },
+      runningMode: "VIDEO", minDetectionConfidence: .5
+    });
+    return cam.det;
+  }
+  async function startCam() {
+    if (cam.on || cam.starting || !cam.gum || cam.failed > 2) return;
+    cam.starting = true;
+    try {
+      await loadDetector();
+      if (!camAllowed()) return;
+      cam.stream = await cam.gum({ video: { facingMode: "user", width: { ideal: 320 }, height: { ideal: 240 }, frameRate: { ideal: 15 } }, audio: false });
+      if (!cam.video) { cam.video = document.createElement("video"); cam.video.muted = true; cam.video.playsInline = true; cam.video.setAttribute("playsinline", ""); }
+      cam.video.srcObject = cam.stream;
+      await cam.video.play();
+      cam.on = true;
+    } catch (e) { cam.failed++; stopCam(); }
+    finally { cam.starting = false; }
+  }
+  function stopCam() {
+    if (cam.stream) cam.stream.getTracks().forEach((t) => t.stop());
+    cam.stream = null; cam.on = false;
+    if (cam.video) cam.video.srcObject = null;
+  }
+  function track(now) {
+    if (!cam.on || cam.busy || now - cam.last < 110) return;
+    const v = cam.video;
+    if (!v || v.readyState < 2 || !v.videoWidth) return;
+    cam.last = now; cam.busy = true;
+    try {
+      const r = cam.det.detectForVideo(v, now);
+      const f = r && r.detections && r.detections[0];
+      if (f) {
+        const b = f.boundingBox, w = v.videoWidth, h = v.videoHeight;
+        // the front camera sees a mirror image: the child's right is the picture's left
+        cam.x = -(((b.originX + b.width / 2) / w) - .5) * 2.2;
+        cam.y = (((b.originY + b.height * .4) / h) - .5) * 2;
+        if (now - cam.seenAt > 8000 && now - cam.lostAt > 3000 && st() === "idle") { nextBlink = now; hop(); }
+        cam.seenAt = now;
+      } else if (faceSeen(now)) cam.lostAt = now;
+    } catch (e) { cam.failed++; if (cam.failed > 2) stopCam(); }
+    cam.busy = false;
+  }
+  setInterval(() => { if (camAllowed()) startCam(); else if (cam.on) stopCam(); }, 1500);
+  document.addEventListener("visibilitychange", () => { if (document.hidden) stopCam(); });
+
   // ---------- frame loop ----------
   let prev = performance.now(), prevHeadX = 0;
   function frame(now) {
@@ -336,6 +406,7 @@
     if (document.hidden) { requestAnimationFrame(frame); return; }
     moodDecay(now);
     applyMood();
+    track(now);
     saccade(now);
     blink(now);
     boredom(now);
@@ -369,7 +440,13 @@
     head.tilt.t = s === "listening" ? 7 + level * .5 : s === "thinking" ? -5 : curMoodName() === "utangac" ? -6 : 0;
     Object.values(head).forEach((h) => stepSpring(h, dt));
     if (!reduce) {
-      pupils.style.transform = `translate(${(gaze.x.x * 4.5).toFixed(2)}px, ${(gaze.y.x * 3.2).toFixed(2)}px)`;
+      const pt = `translate(${(gaze.x.x * 4).toFixed(2)}px, ${(gaze.y.x * 4).toFixed(2)}px)`;
+      pupilsAll.forEach((p) => (p.style.transform = pt));
+      // pupils widen when she listens, sees a face or gets excited, shrink in bright surprise
+      const n = curMoodName();
+      pupil.t = s === "listening" || faceSeen(now) ? 3.6 : n === "saskin" ? 2.3 : n === "heyecanli" || n === "mutlu" ? 3.5 : 3;
+      stepSpring(pupil, dt);
+      pupilDots.forEach((p) => p.setAttribute("r", pupil.x.toFixed(2)));
       look.setAttribute("transform",
         `translate(${(head.x.x * 3).toFixed(2)} ${(head.y.x * 2).toFixed(2)}) rotate(${(head.x.x * 4 + head.tilt.x).toFixed(2)} 100 128)`);
       // accessories lag behind the head and wobble back
@@ -381,11 +458,10 @@
       glare.forEach((g, i) => g.setAttribute("transform", `translate(${(-tiltX * 3 - head.x.x * 1.5).toFixed(2)} ${(-tiltY * 1.5).toFixed(2)}) ${glareBase[i]}`));
     }
 
-    // antenna glow: the mic level while listening, the mood colour otherwise
-    const target = s === "listening" ? 3 + level * 1.6 : s === "speaking" ? 5 : curMoodName() !== "notr" ? 6 : 2;
+    // antenna tip pulses with the mic level (no CSS filters: some WebViews make filtered SVG parts vanish)
+    const target = s === "listening" ? level / 10 : 0;
     glow += (target - glow) * Math.min(1, dt * 12);
-    const col = (MOODS[curMoodName()] || {}).glow || "var(--ring)";
-    if (antenna) antenna.style.filter = `drop-shadow(0 0 ${glow.toFixed(1)}px ${s === "listening" ? "var(--ring-listen)" : col})`;
+    if (tip) tip.setAttribute("transform", glow > .02 ? `translate(100 ${tipY}) scale(${(1 + glow * .5).toFixed(3)}) translate(-100 ${-tipY})` : "");
     level *= Math.pow(.02, dt);
 
     requestAnimationFrame(frame);
