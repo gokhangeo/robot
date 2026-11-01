@@ -1,11 +1,12 @@
 {
-  "version":28,
+  "version": 29,
   "minApp": 6,
   "files": [
     "index.html",
     "robot.js",
     "sfx.js",
-    "bubble.html"
+    "bubble.html",
+    "alive.js"
   ],
   "note": "Telefonlara yeni özellik göndermek için: dosyaları değiştirin, version'ı 1 artırın, robot dalına push edin."
 }

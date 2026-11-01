@@ -236,6 +236,7 @@ function robotSvg(opts = {}) {
     <radialGradient id="${id}tip" cx=".35" cy=".35" r=".7"><stop offset="0" stop-color="#ffffff"/><stop offset="1" style="stop-color:var(--ring)"/></radialGradient>
     <radialGradient id="${id}eye" cx=".5" cy=".4" r=".7"><stop offset="0" stop-color="#ffffff" stop-opacity=".9"/><stop offset=".35" style="stop-color:var(--eye)"/><stop offset="1" style="stop-color:var(--eye)"/></radialGradient>
     <clipPath id="${id}torso"><path d="${TORSO}"/></clipPath>
+    <clipPath id="${id}mouth"><path class="mouth-clip" d="M88 135 Q100 143 112 135 Q100 143 88 135 Z"/></clipPath>
   </defs>
   <g transform="translate(100 88) scale(1.06) translate(-100 -104)">
     <g class="flip" id="flip">
@@ -249,8 +250,8 @@ function robotSvg(opts = {}) {
         ${group("o", OUTFITS)}
         <g clip-path="url(#${id}torso)">${group("o", OUTFITS_CLIPPED)}</g>
       </g>
-      <g class="head-group head">
-        ${group("hb", HEAD_BACK)}
+      <g class="head-look"><g class="head-group head">
+        <g class="acc-sway">${group("hb", HEAD_BACK)}</g>
         <g class="antenna">
           <rect x="97" y="54" width="6" height="22" rx="3" fill="var(--head-shade)"/>
           <circle cx="100" cy="51" r="11" fill="var(--ring)" opacity=".25"/>
@@ -260,9 +261,12 @@ function robotSvg(opts = {}) {
         <rect x="142" y="91" width="15" height="36" rx="7.5" fill="url(#${id}ear)"/>
         <circle cx="50.5" cy="109" r="3" fill="#fff" opacity=".7"/><circle cx="149.5" cy="109" r="3" fill="#fff" opacity=".7"/>
         <rect x="54" y="72" width="92" height="76" rx="26" fill="url(#${id}head)" stroke="#ffffff" stroke-opacity=".7" stroke-width="1.2"/>
-        <ellipse cx="76" cy="79" rx="14" ry="4.5" fill="#fff" opacity=".85" transform="rotate(-10 76 79)"/>
+        <ellipse class="glare" cx="76" cy="79" rx="14" ry="4.5" fill="#fff" opacity=".85" transform="rotate(-10 76 79)"/>
         <rect x="63" y="83" width="74" height="44" rx="18" fill="url(#${id}visor)"/>
-        <path d="M70 96 Q71 89 79 88" stroke="#fff" stroke-opacity=".28" stroke-width="3" stroke-linecap="round" fill="none"/>
+        <path class="glare" d="M70 96 Q71 89 79 88" stroke="#fff" stroke-opacity=".28" stroke-width="3" stroke-linecap="round" fill="none"/>
+        <g class="brows" stroke="var(--eye)" stroke-width="3" stroke-linecap="round" fill="none">
+          <path class="brow brow-l" d="M77 89 Q84 86.5 91 89"/><path class="brow brow-r" d="M109 89 Q116 86.5 123 89"/>
+        </g>
         <g class="eyes"><g class="pupils">
           <rect class="eye" x="77" y="94" width="14" height="19" rx="6.5" fill="url(#${id}eye)"/>
           <rect class="eye" x="109" y="94" width="14" height="19" rx="6.5" fill="url(#${id}eye)"/>
@@ -280,10 +284,11 @@ function robotSvg(opts = {}) {
           <ellipse cx="69" cy="136" rx="6.5" ry="3.8"/>
           <ellipse cx="131" cy="136" rx="6.5" ry="3.8"/>
         </g>
-        <path class="mouth" d="M88 135 Q100 143 112 135" stroke="var(--visor)" stroke-width="4" fill="none" stroke-linecap="round"/>
+        <path class="mouth" d="M88 135 Q100 143 112 135 Q100 143 88 135 Z" stroke="var(--visor)" stroke-width="4" fill="var(--visor)" stroke-linecap="round" stroke-linejoin="round"/>
+        <ellipse class="tongue" cx="100" cy="140" rx="0" ry="0" fill="#ff8fab" clip-path="url(#${id}mouth)"/>
         ${group("f", FACE)}
-        ${group("h", HEAD_FRONT)}
-      </g>
+        <g class="acc-sway">${group("h", HEAD_FRONT)}</g>
+      </g></g>
     </g>
   </g>
 </svg>`;
@@ -304,7 +309,10 @@ Object.defineProperty(window, "ROBOT_SVG", { get: robotSvg });
     svg[data-face="allik"] .cheeks { display: none; }
     .sleep-eyes { display: none; }
     body.sleeping .sleep-eyes { display: inline; }
-    body.sleeping .eyes { display: none; }`;
+    body.sleeping .eyes { display: none; }
+    .brows { opacity: 0; transition: opacity .3s; }
+    .brow { transform-box: fill-box; transform-origin: center; transition: transform .35s cubic-bezier(.3,1.5,.5,1); }
+    body.sleeping .brows { opacity: 0 !important; }`;
   document.head.appendChild(st);
 })();
 

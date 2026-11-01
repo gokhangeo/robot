@@ -410,6 +410,7 @@
 </style>
 <script src="robot.js"></script>
 <script src="sfx.js"></script>
+<script src="alive.js"></script>
 </head>
 <body>
   <div class="sky" id="sky"></div>
@@ -883,6 +884,7 @@ Genel kurallar:
 Özel etiketler (köşeli parantez içinde, tam bu yazımla; uygulama bunları okumaz, işler):
 - [yıldız]: Gerçekten emek verdiğinde ekle (ödevde bir adımı doğru yapması, bir sayfa okuması, güzel bir İngilizce cümle kurması gibi). ${kid} bir yıldız kazanır. Her cevaba koyma; günde birkaç kez yeterli.
 - [hatırla: kısa not]: Onunla ilgili kalıcı ve önemli bir şey öğrenirsen ekle (sevdiği şeyler, evcil hayvanının adı, arkadaşlarının adları, zorlandığı veya sevdiği dersler, başarıları). Adres, okul adı, telefon, şifre, sağlık ya da aile içi özel konuları asla not etme. Zaten bildiğin şeyi tekrar not etme.
+- [duygu: X]: Her cevabının en başına o anki duygunu gösteren tek bir etiket koy; yüzün ve sesin buna göre değişir. X şunlardan biri: mutlu, heyecanlı, şaşkın, üzgün, düşünceli, utangaç, gururlu, sakin. Duygu cevabın ortasında değişirse (örneğin önce düşünüp sonra sevinirsen) oraya ikinci bir etiket koyabilirsin. Uyku masalında hep sakin kullan. Onun üzüldüğü bir şeyi anlatırken üzgün, başarısında gururlu ya da heyecanlı ol.
 - [isim: YeniAd]: Senin adını değiştirmek isterse (örneğin "senin adın artık Pamuk olsun") yeni adı memnuniyetle kabul et ve bu etiketi ekle. Uygunsuz bir isim isterse nazikçe başka bir isim öner.`;
     if (c.fx && mode !== "story") p += `
 - Ses efektleri: ara sıra (en fazla bir iki tane) [kıkır] gülmek, [alkış] tebrik, [yaşasın] sevinç, [vay] şaşırma, [bipbip] robot sesi, [hmm] düşünmek için.`;
@@ -890,6 +892,11 @@ Genel kurallar:
 
 ${kid} hakkında hatırladıkların (doğal biçimde kullan, hepsini birden sayma):
 ${memories.map((m) => "- " + m.t).join("\n")}`;
+    const recent = window.Alive ? Alive.recentNote() : "";
+    if (recent) p += `
+
+Daha önceki konuşmalarınızdan (uygun olursa doğal biçimde hatırla, örneğin "Dün ... konuşmuştuk, nasıl gitti?"; her seferinde bahsetme):
+${recent}`;
     const rules = [A.get("parentRules", "").trim(), remoteRules].filter(Boolean).join("\n");
     if (rules) p += `
 
@@ -973,12 +980,17 @@ Sınav konuları: ${examRun.exam.topics.join(", ")}.
   }
 
   const MOUTHS = ["M88 135 Q100 143 112 135", "M90 133 Q100 150 110 133", "M86 134 Q100 146 114 134", "M92 134 Q100 139 108 134"];
+  // The mouth is moved by alive.js (lip sync from the spoken text); the old random mouth stays as a fallback.
   function startMouth() {
+    if (window.Alive) return Alive.mouthStart();
     stopMouth();
     let i = 0;
     mouthTimer = setInterval(() => { i = (i + 1 + Math.floor(Math.random() * 2)) % MOUTHS.length; mouth.setAttribute("d", MOUTHS[i]); }, 120);
   }
-  function stopMouth() { clearInterval(mouthTimer); mouthTimer = null; mouth.setAttribute("d", MOUTHS[0]); }
+  function stopMouth() {
+    if (window.Alive) return Alive.mouthStop();
+    clearInterval(mouthTimer); mouthTimer = null; mouth.setAttribute("d", MOUTHS[0]);
+  }
 
   function setSleeping(on) {
     body.classList.toggle("sleeping", on);
@@ -1017,6 +1029,7 @@ Sınav konuları: ${examRun.exam.topics.join(", ")}.
     const low = raw.toLocaleLowerCase("tr").trim();
     const after = raw.slice(raw.indexOf(":") + 1);
     if (/^isim\s*:/.test(low)) return renameBot(after);
+    if (/^duygu\s*:/.test(low)) { steps.push({ mood: after.trim().toLocaleLowerCase("tr") }); return; }
     if (/^hat[ıi]rla\s*:/.test(low)) return addMemory(after);
     if (coStory && /^ba[şs]l[ıi]k\s*:/.test(low)) { coStory.title = after.trim().slice(0, 60); return; }
     if (coStory && /^resim\s*:/.test(low)) { coStory.cover = after.trim().slice(0, 24); return; }
@@ -1057,8 +1070,13 @@ Sınav konuları: ${examRun.exam.topics.join(", ")}.
     } else if (step.news) {
       celebrate(step.news.icon, step.news.title);
       setTimeout(nextStep, cfg().fx ? playFx("alkis") : 300);
+    } else if (step.mood) {
+      if (window.Alive) Alive.mood(step.mood);
+      nextStep();
     } else {
-      A.speakWith(step.say, step.lang, String(rateMul));
+      const r = rateMul * (window.Alive ? Alive.rateFor() : 1);
+      if (window.Alive) Alive.willSay(step.say, step.lang, r);
+      A.speakWith(step.say, step.lang, String(r));
     }
   }
   function finishSpeaking() {
@@ -1407,7 +1425,7 @@ Sınav konuları: ${examRun.exam.topics.join(", ")}.
       bubble.querySelector(".sayNow")?.remove(); bubble.appendChild(cue);
     } else if (cfg().fx) { bell(NOTE(79), 0, 0.08, 0.5); bell(NOTE(86), 0.08, 0.08, 0.6); }
   };
-  window.onLevel = (rms) => { if (state === "listening") ring.style.transform = `scale(${1 + Math.max(0, Math.min(10, parseFloat(rms))) / 140})`; };
+  window.onLevel = (rms) => { if (window.Alive) Alive.level(rms); if (state === "listening") ring.style.transform = `scale(${1 + Math.max(0, Math.min(10, parseFloat(rms))) / 140})`; };
   window.onPartial = (t) => {
     if (state !== "listening") return;
     lastPartial = t;
@@ -1439,6 +1457,7 @@ Sınav konuları: ${examRun.exam.topics.join(", ")}.
     if (letters) return lettersHeard(text);
     if (coStory) coStory.lines.push({ by: "kid", t: text });
     if (mode === "chat") bump("chats");
+    if (window.Alive) Alive.noteHeard(text, mode);
     setState("thinking");
     show(text, "");
     if (mode === "english") bump("english");
@@ -1987,7 +2006,7 @@ Sınav konuları: ${examRun.exam.topics.join(", ")}.
   // Turns the on-screen robot into a picture: hidden parts removed, CSS colours written in.
   function svgToImage(svg, w, h) {
     const clone = svg.cloneNode(true), orig = svg.querySelectorAll("*"), copies = clone.querySelectorAll("*");
-    orig.forEach((el, i) => { const st = getComputedStyle(el); if (st.display === "none" || st.visibility === "hidden") copies[i].setAttribute("data-drop", "1"); });
+    orig.forEach((el, i) => { const st = getComputedStyle(el); if (st.display === "none" || st.visibility === "hidden" || st.opacity === "0") copies[i].setAttribute("data-drop", "1"); });
     clone.querySelectorAll("[data-drop]").forEach((el) => el.remove());
     clone.setAttribute("width", w); clone.setAttribute("height", h);
     clone.setAttribute("xmlns", "http://www.w3.org/2000/svg");
@@ -2693,7 +2712,7 @@ Cevabının en başına yalnızca [onay] ya da [ret] yaz. Sonra Türkçe, sesli 
     $("playSheet").classList.remove("open");
   }
   $("playClose").addEventListener("click", closePlay);
-  const say1 = (t, lang = "tr") => A.speakWith(t, lang, "1");
+  const say1 = (t, lang = "tr") => { if (window.Alive) Alive.willSay(t, lang, 1); A.speakWith(t, lang, "1"); };
   function playAgainButton(label, fn) {
     const b = document.createElement("button"); b.className = "btn primary"; b.style.width = "100%"; b.style.marginTop = "12px";
     b.textContent = label; b.addEventListener("click", fn); $("playBody").appendChild(b);
