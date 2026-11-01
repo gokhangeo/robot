@@ -928,12 +928,12 @@ ${rules}`;
 - ${FIGURE_RULE}
 - Adımlar bitince 3 soruluk mini bir test yap, sonra konuyu iki cümleyle özetleyip dersi bitir.
 - ${/English/.test(lessonTopic.subject) ? "İngilizce kelime ve cümleleri süslü parantez içinde yaz; açıklamaları Türkçe yap." : "Sembol yerine kelime kullan (örneğin üzeri yerine 'üssü', kesir için 'üçte iki')."}`,
-    exam: (c, kid) => `Şu an deneme sınavı modundasınız. ${kid} yaklaşan ${examRun.exam.national ? "ülke geneli ortak" : "okul"} ${subjName(examRun.exam.subject)} sınavına (${EXAM_LABEL[examRun.exam.term]}) hazırlanıyor (6. sınıf, Türkiye Yüzyılı Maarif Modeli).
+    exam: (c, kid, guide = EXAM_GUIDE[examRun.exam.id]) => `Şu an deneme sınavı modundasınız. ${kid} yaklaşan ${examRun.exam.national ? "ülke geneli ortak" : "okul"} ${subjName(examRun.exam.subject)} sınavına (${EXAM_LABEL[examRun.exam.term]}) hazırlanıyor (6. sınıf, Türkiye Yüzyılı Maarif Modeli).
 Sınav konuları: ${examRun.exam.topics.join(", ")}.
-- MEB ortak yazılı sınavları gibi açık uçlu, 6. sınıf seviyesinde 8 soru sor; konulara dengeli dağıt. Soruları tek tek sor, her seferinde sadece bir soru ve cevabını bekle. Sorunun başında kaçıncı soru olduğunu söyle.
+- ${guide ? guide.text + "\n- " : ""}MEB ortak yazılı sınavları gibi açık uçlu, 6. sınıf seviyesinde ${guide ? guide.n : 8} soru sor; konulara dengeli dağıt. Soruları tek tek sor, her seferinde sadece bir soru ve cevabını bekle. Sorunun başında kaçıncı soru olduğunu söyle.
 - ${/Matematik/.test(examRun.exam.subject) ? "Günlük hayattan problemler sor ve işlemini nasıl yaptığını anlatmasını iste; sadece sonucu söylerse nasıl bulduğunu sor." : "Kısa yazılı cevap gerektiren sorular sor (açıklama, örnek verme, karşılaştırma)."}
-- Her cevaptan sonra 1-2 cümleyle değerlendir: doğruysa kısaca öv, yanlış ya da eksikse doğrusunu kısaca açıkla. Her soru 12,5 puan; yarım doğruya yarım puan ver. Bu modda [yıldız] etiketi kullanma.
-- 8. sorudan sonra toplam puanı söyle, iyi olduğu ve tekrar etmesi gereken konuları belirt, cesaret verici bir cümleyle bitir ve en sona [puan: 85] gibi puan etiketini ekle.
+- Her cevaptan sonra 1-2 cümleyle değerlendir: doğruysa kısaca öv, yanlış ya da eksikse doğrusunu kısaca açıkla. Her soru eşit puanlı, toplam 100; yarım doğruya yarım puan ver. Bu modda [yıldız] etiketi kullanma.
+- Son sorudan sonra toplam puanı söyle, iyi olduğu ve tekrar etmesi gereken konuları belirt, cesaret verici bir cümleyle bitir ve en sona [puan: 85] gibi puan etiketini ekle.
 - ${FIGURE_RULE}`,
     cowrite: (c, kid) => `Şu an ${kid} ile birlikte masal yazıyorsunuz, sırayla anlatıyorsunuz.
 - ${kid} bir iki cümle söyler; sen onun fikrini mutlaka kullanarak hikayeyi 1-2 kısa cümleyle sürdür ve "Sonra ne oldu?" gibi bir soruyla sözü ona bırak.
@@ -1149,7 +1149,7 @@ Sınav konuları: ${examRun.exam.topics.join(", ")}.
     english: () => "[bipbip] {Hello! Let's speak English!} Hadi İngilizce konuşalım. {How are you today?}",
     story: () => "Masal zamanı. Bu gece ne hakkında bir masal istersin? Prensesler, uzay, hayvanlar ya da deniz altı olabilir.",
     lesson: () => `[yaşasın] ${lessonTopic.topic} dersine başlıyoruz! Hazırsan başlayalım.`,
-    exam: () => `[bipbip] ${subjName(examRun.exam.subject)} deneme sınavı başlıyor! Sekiz soru soracağım, acele etme, işlemlerini düşünerek cevap ver.`,
+    exam: () => `[bipbip] ${subjName(examRun.exam.subject)} deneme sınavı başlıyor! ${(EXAM_GUIDE[examRun.exam.id] || { n: 8 }).n} soru soracağım, acele etme, işlemlerini düşünerek cevap ver.`,
     cowrite: () => "[yaşasın] Hadi birlikte masal yazalım! Ben başlıyorum: Bir varmış, bir yokmuş... Şimdi sen söyle, masalımızın kahramanı kim?"
   };
   function markMode(m) {
@@ -3006,8 +3006,8 @@ Cevabının en başına yalnızca [onay] ya da [ret] yaz. Sonra Türkçe, sesli 
       "6. Teknoloji ve Sosyal Bilimler": ["Teknolojinin hayatımıza etkisi", "Bilimsel buluşlar ve bilim insanları", "Güvenli ve bilinçli internet kullanımı"]
     },
     "🕌 Din Kültürü": {
-      "1. Peygamber ve İlahi Kitap İnancı": ["Peygamberlik ve peygamberlerin özellikleri", "Peygamberlerin görevleri", "İlahi kitaplar ve sahifeler", "Felak Suresi ve anlamı"],
-      "2. Ramazan ve Oruç": ["Ramazan ayı ve oruç ibadeti", "Orucun faydaları", "Kadir Gecesi ve bayram", "Fıtır sadakası ve paylaşma"],
+      "1. Peygamber ve İlahi Kitap İnancı": ["Peygamberlik ve peygamberlerin özellikleri", "Vahiy ve insanlara rehberliği", "Vahyin toplumsal mesajları", "İlahi kitaplar ve gönderildiği peygamberler", "Felak Suresi ve anlamı"],
+      "2. Ramazan ve Oruç": ["Ramazan ayı: oruç ayı ve Kur'an ayı", "Ramazan ayı ve oruç ibadeti", "Orucun faydaları", "Kadir Gecesi ve bayram", "Fıtır sadakası ve paylaşma"],
       "3. Ahlaki Davranışlar": ["Doğru sözlülük", "Merhamet", "Adap ve nezaket", "Vatan sevgisi"],
       "4. Peygamberliğinden Önce Hz. Muhammed": ["Hz. Muhammed'in doğumu ve çocukluğu", "Gençliği ve evliliği", "Güvenilir (Muhammedül Emin) olması", "Hilfu'l-Fudul ve Kâbe hakemliği"],
       "5. Kültürümüzdeki Dinî Motifler": ["Mimarimizde dinî motifler", "Edebiyat ve musikide dinî motifler", "Gelenek ve göreneklerimiz"]
@@ -3074,7 +3074,7 @@ Cevabının en başına yalnızca [onay] ya da [ret] yaz. Sonra Türkçe, sesli 
       "2-1": U("🔢 Matematik", 3, 4),
       "2-2": U("🔢 Matematik", 5, 6)
     },
-    "🔬 Fen": { "1-1": U("🔬 Fen", 1, 2), "1-2": U("🔬 Fen", 3), "2-1": U("🔬 Fen", 4, 5), "2-2": U("🔬 Fen", 6, 7) },
+    "🔬 Fen": { "1-1": ["Güneş Sistemi'ndeki gezegenler", "Gezegenlerin özellikleri ve hareketleri", "Güneş tutulması", "Ay tutulması", "Bileşke kuvvet", "Dengelenmiş ve dengelenmemiş kuvvetler", "Sürat ve hız"], "1-2": U("🔬 Fen", 3), "2-1": U("🔬 Fen", 4, 5), "2-2": U("🔬 Fen", 6, 7) },
     "📝 Türkçe": {
       "1-1": ["Dilimizin Zenginliği", "Bağımsızlık Yolu", "Kök ve ekler", "Yapım ekleri ve çekim ekleri", "Gerçek, mecaz ve terim anlam", "Eş ve zıt anlamlı sözcükler", "Konu ve ana fikir"],
       "1-2": ["Farklı Dünyalar", "İsimler (adlar)", "İsim tamlamaları", "Sıfatlar ve sıfat tamlaması", "Eş sesli sözcükler", "Hikâye unsurları", "Yardımcı fikirler"],
@@ -3083,7 +3083,14 @@ Cevabının en başına yalnızca [onay] ya da [ret] yaz. Sonra Türkçe, sesli 
     },
     "🌍 Sosyal": { "1-1": U("🌍 Sosyal", 1, 2), "1-2": U("🌍 Sosyal", 3), "2-1": U("🌍 Sosyal", 4), "2-2": U("🌍 Sosyal", 5, 6) },
     "🇬🇧 English": { "1-1": U("🇬🇧 English", 1), "1-2": U("🇬🇧 English", 2), "2-1": U("🇬🇧 English", 3), "2-2": U("🇬🇧 English", 4) },
-    "🕌 Din Kültürü": { "1-1": U("🕌 Din Kültürü", 1, 2), "1-2": U("🕌 Din Kültürü", 3), "2-1": U("🕌 Din Kültürü", 4), "2-2": U("🕌 Din Kültürü", 5) }
+    "🕌 Din Kültürü": { "1-1": ["Vahiy ve insanlara rehberliği", "Vahyin toplumsal mesajları", "İlahi kitaplar ve gönderildiği peygamberler", "Felak Suresi ve anlamı", "Ramazan ayı: oruç ayı ve Kur'an ayı"], "1-2": U("🕌 Din Kültürü", 3), "2-1": U("🕌 Din Kültürü", 4), "2-2": U("🕌 Din Kültürü", 5) }
+  };
+  // Okulun/MEB senaryosunun kazanımları ve soru tarzı (gönderilen 1. yazılı örneklerinden özet).
+  const EXAM_GUIDE = {
+    "Fen-1-1": { n: 7, text: `MEB 1. senaryo kazanımları: FB.6.1.1 gezegenleri niteliklerine göre sınıflandırma (2 soru), FB.6.1.3 Güneş ve Ay tutulması çıkarımı (1 soru), FB.6.2.1 aynı doğrultudaki kuvvetlerle bileşke kuvvet (2 soru), FB.6.2.2 dengelenmiş/dengelenmemiş kuvvet deneyi (1 soru), FB.6.2.3 sürat ve hız karşılaştırma (1 soru).
+Soru tarzı: senaryolu, çok adımlı (a, b, c şıkları). Örnekler: gezegen sınıflandırma ağacı (karasal/gazlı, uydusu var mı, halkası var mı); Güneş'ten uzaklaşan uzay aracının geçtiği gezegenler ve asteroit kuşağı, hacimce en büyük gezegenler; iki gözlem kaydından hangisinin Güneş, hangisinin Ay tutulması olduğu, gölgesi düşen gök cismi, hangi ay evresinde olduğu ve neden her ay olmadığı; kareli alanda (1 kare = 1 N) kişilerin uyguladığı kuvvetlerin büyüklük-yönü ve bileşke kuvvet; dört kişinin itme kuvvetleri grafiğinden bileşke, bileşkeyi sıfır yapan ikili; dinamometre deneyinde değiştirilen/gözlenen değişken, hipotezi destekleme; haritada (1 kare = 100 m) alınan yol, yer değiştirme, gidiş-dönüş yer değiştirmesi sıfır, sabit sürat ile sabit hız farkı. Şekil gereken sorularda SVG çiz.` },
+    "Din Kültürü-1-1": { n: 6, text: `Kazanımlar: DKAB.6.1.2 vahyin insanlara rehberliği ve toplumsal mesajları, DKAB.6.1.3 ilahi kitaplar, DKAB.6.1.4 Felak suresinin mesajı, DKAB.6.2.1 Ramazan ayının önemi.
+Soru tarzı ve beklenen cevaplar: insanın vahye neden ihtiyaç duyduğu ve vahyin iki rehberlik yönü (Allah'ı tanıtır, hayatın anlamı ve ahiret, doğru-yanlışı ayırma); adalet, iyilik ve yardımlaşmanın topluma katkısı; Tevrat-Hz. Musa, Zebur-Hz. Davud, İncil-Hz. İsa; gönderiliş sırası Tevrat, Zebur, İncil, Kur'an-ı Kerim; Kur'an'ın değişmeden günümüze ulaşması; Felak suresinde kötülüklerden ve kıskançlıktan Allah'a sığınma, kıskançlıkla ilgili davranış örneği; Ramazan'a oruç ayı (oruç bu ayda tutulur) ve Kur'an ayı (Kadir Gecesi'nde indirilmeye başlandı) denmesi.` }
   };
   // talimat.json "sinavlar" can set the exact day the school picked: {"ders": "Fen", "sinav": "1-1", "tarih": "2026-11-05"}.
   let remoteExams = loadJson("remoteExams", []), examRun = null;
