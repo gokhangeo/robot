@@ -760,6 +760,11 @@
       <small>Yeni özellikler internetten kendiliğinden gelir, APK'yı yeniden yüklemeniz gerekmez. <span id="versionInfo"></span></small>
       <button class="link" id="checkUpdate">Şimdi güncellemeleri kontrol et</button>
 
+      <h3>Yedek</h3>
+      <small>Uygulamayı silip yeniden kurmadan önce tüm ayarları, yıldızları, hafızayı, masalları ve API anahtarlarını tek bir metin olarak kopyalayın; bir yere (ör. kendinize e-posta veya not) yapıştırıp saklayın. Bu metin API anahtarlarını da içerir, kimseyle paylaşmayın.</small>
+      <button class="link" id="backupCopy">Yedeği kopyala</button>
+      <textarea id="backupText" rows="5" readonly style="display:none;width:100%;margin-top:8px;padding:10px;font-size:12px;border-radius:12px;border:1px solid var(--pill-border);background:#10141a;color:var(--text);font-family:monospace;user-select:text;-webkit-user-select:text"></textarea>
+
       <div class="btns">
         <button class="btn ghost" id="test">Sesi dene</button>
         <button class="btn ghost" id="clear">Sohbeti sıfırla</button>
@@ -3649,6 +3654,39 @@ Soru tarzı ve beklenen cevaplar: insanın vahye neden ihtiyaç duyduğu ve vahy
   $("battery").addEventListener("click", () => A.openBatterySettings());
   $("checkUpdate").addEventListener("click", () => { $("checkUpdate").textContent = "Kontrol ediliyor…"; A.checkUpdate(); });
   window.onUpdateResult = (msg) => { $("checkUpdate").textContent = "Şimdi güncellemeleri kontrol et"; alert(msg); };
+
+  // ---------- backup: every stored value (Android SharedPreferences via A.get + localStorage) as one JSON text ----------
+  const BACKUP_KEYS = ["apiKey", "model", "botName", "kidName", "kidAge", "birthday", "grade", "morningTime", "eveningTime", "parentRules",
+    "auto", "fx", "watch", "tvMode", "ttsProvider", "cloudVoice", "cloudVoiceLabel", "cloudVoiceProvider", "elevenKey", "googleKey",
+    "edgeVoice", "edgeRate", "edgePitch", "spotifyClientId", "spotifyClientSecret",
+    "stats", "memories", "look", "care", "stories", "seenNotes", "remoteExams", "remoteRules", "examScores", "pendingRoutine",
+    "nameMig1", "gradeMig1", "lipPace", "recentTalk", "notices", "updateBase"];
+  const NOKEY = "__yok__";
+  function makeBackup() {
+    const prefs = {};
+    BACKUP_KEYS.forEach((k) => { try { const v = A.get(k, NOKEY); if (v !== NOKEY && v !== null && v !== undefined) prefs[k] = String(v); } catch (e) { } });
+    const ls = {};
+    try { for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i); ls[k] = localStorage.getItem(k); } } catch (e) { }
+    let voice = null;
+    try { const [rate, pitch, name] = A.getVoice().split(","); voice = { rate, pitch, voice: name || "" }; } catch (e) { }
+    let overlay = false; try { overlay = !!A.overlayOn(); } catch (e) { }
+    let ver = ""; try { ver = A.versionInfo(); } catch (e) { }
+    return JSON.stringify({ app: "pamuk-robot", format: 1, created: new Date().toISOString(), version: ver, prefs, voice, overlay, localStorage: ls });
+  }
+  function copyText(text, ta) {
+    let ok = false;
+    try { if (A.copyText) { A.copyText(text); ok = true; } } catch (e) { }
+    if (!ok && ta) { try { ta.focus(); ta.select(); ta.setSelectionRange(0, text.length); ok = document.execCommand("copy"); } catch (e) { } }
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(() => { }, () => { });
+    return ok;
+  }
+  $("backupCopy").addEventListener("click", () => {
+    const text = makeBackup(), ta = $("backupText");
+    ta.style.display = ""; ta.value = text;
+    const ok = copyText(text, ta);
+    alert(ok ? "Yedek panoya kopyalandı. Şimdi bir yere (ör. kendinize e-posta ya da not uygulaması) yapıştırıp saklayın. Kopyalanmadıysa alttaki kutudaki metne uzun basıp hepsini seçin ve kopyalayın."
+      : "Otomatik kopyalanamadı. Alttaki kutudaki metne uzun basın, Tümünü seç → Kopyala deyin ve bir yere yapıştırıp saklayın.");
+  });
 
   // New web files arrived from GitHub: reload as soon as nothing is going on, so a game or story is never cut off.
   let updatePending = false;
