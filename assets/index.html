@@ -743,7 +743,10 @@
       <div class="row">
         <div><label for="watch">Gözleriyle beni takip etsin (ön kamera)</label>
           <select id="watch"><option value="1">Açık</option><option value="0">Kapalı</option></select></div>
+        <div><label for="tvMode">TV açıkken (gürültülü ortam)</label>
+          <select id="tvMode"><option value="0">Kapalı</option><option value="1">Açık</option></select></div>
       </div>
+      <small>"TV açıkken" açılınca robot konuştuktan sonra mikrofonu kendiliğinden açmaz ve uzaktaki TV/radyo seslerini daha sıkı eler; konuşmak için robota dokunun ve telefona yakın konuşun.</small>
 
       <h3>Ekranda gezen robot</h3>
       <label for="overlay">Robot diğer uygulamaların üstünde gezsin</label>
@@ -863,7 +866,8 @@
     return {
       botName: A.get("botName", "Pamuk"), kidName: A.get("kidName", "Gizem"), birthday: A.get("birthday", "2015-03-02"),
       morning: A.get("morningTime", "07:30"), evening: A.get("eveningTime", "20:30"),
-      grade: A.get("grade", "6"), auto: A.get("auto", "1") === "1", fx: A.get("fx", "1") === "1"
+      grade: A.get("grade", "6"), auto: A.get("auto", "1") === "1", fx: A.get("fx", "1") === "1",
+      tv: A.get("tvMode", "0") === "1"
     };
   }
 
@@ -906,6 +910,12 @@ ${recent}`;
 
 Ebeveyninin sana talimatları (yukarıdaki güvenlik kurallarıyla çelişmedikçe bunlara uy):
 ${rules}`;
+    p += `
+
+Ses tanıma:
+- ${kid}'in sözleri bir çocuğun sesinden otomatik ses tanımayla yazıya dökülüyor; kelimeler yanlış, eksik ya da bitişik yazılmış olabilir (örneğin benzer sesli başka kelimeler). Konuşmanın akışına bakarak en olası kastettiği şeyi tahmin et ve ona göre cevap ver; ses tanıma hatalarından bahsetme. Gerçekten hiç anlaşılmıyorsa kısa ve tatlı bir soruyla ne demek istediğini sor.`;
+    if (mode !== "read") p += `
+- Yanında televizyon, radyo ya da konuşan yetişkinler olabilir ve mikrofon onları da duyabilir. Gelen metin açıkça sana ya da konuşmanıza yönelik değilse (televizyon dizisi veya haber cümlesi, reklam, şarkı sözü, yetişkinlerin kendi aralarındaki konuşması, konuyla hiç ilgisi olmayan yarım cümleler) hiçbir şey söyleme ve cevap olarak sadece [YOK] yaz. Emin değilsen ve ${kid}'in söylemiş olması mümkünse normal cevap ver.`;
     p += "\n\n" + MODE_PROMPTS[mode](c, kid);
     return p;
   }
@@ -961,6 +971,7 @@ Sınav konuları: ${examRun.exam.topics.join(", ")}.
 
   // ---------- face & state ----------
   function setState(s) {
+    if (live && live.open && !live.own) live.cancelled = true;
     state = s;
     body.classList.remove("listening", "thinking", "speaking");
     if (s !== "idle") body.classList.add(s);
@@ -1060,7 +1071,14 @@ Sınav konuları: ${examRun.exam.topics.join(", ")}.
     if (state !== "speaking") return;
     if (pendingNews.length) queue.unshift(...pendingNews.splice(0).flatMap((n) => [{ news: n }, { say: n.say, lang: "tr" }]));
     const step = queue.shift();
-    if (!step) return finishSpeaking();
+    if (!step) {
+      if (live && live.open && live.started) {
+        const more = livePull(live);
+        if (more.length) { queue.push(...more); return nextStep(); }
+        live.waiting = true; stopMouth(); return; // more sentences are still arriving
+      }
+      return finishSpeaking();
+    }
     if (step.fx) {
       startMouth();
       setTimeout(() => { stopMouth(); nextStep(); }, playFx(step.fx));
@@ -1089,7 +1107,7 @@ Sınav konuları: ${examRun.exam.topics.join(", ")}.
     if (then) return then();
     const c = cfg();
     // At start-up (greetings, messages) the mic stays off until she taps or talks herself.
-    if (userEngaged && mode !== "story" && c.auto && autoTurns < 12 && !anySheetOpen()) {
+    if (userEngaged && mode !== "story" && c.auto && !c.tv && autoTurns < 12 && !anySheetOpen()) {
       autoTurns++;
       setTimeout(() => { if (state === "idle") listenNow(); }, 350);
     }
@@ -1102,7 +1120,7 @@ Sınav konuları: ${examRun.exam.topics.join(", ")}.
     if (mode === "english") A.listenWith(englishMicTr ? "tr-TR" : "en-US", "2200");
     else if (mode === "read") A.listenWith("tr-TR", "4000");
     // Quiz answers get a longer pause allowance so "elli… altı" isn't cut in half.
-    else A.listenWith("tr-TR", game ? "2000" : riddle || letters ? "1800" : "1500");
+    else A.listenWith("tr-TR", game ? "2000" : riddle || letters ? "1800" : quickEndMode() ? "1000" : "1500");
   }
 
   // ---------- stars, badges, memory ----------
@@ -1422,22 +1440,80 @@ Sınav konuları: ${examRun.exam.topics.join(", ")}.
 
   // ---------- native callbacks ----------
   let lastPartial = "";
+  // ---------- faster end of turn + background-noise gate ----------
+  // In plain chat the turn ends as soon as the words stop changing (~750 ms) instead of waiting for the recognizer's own end.
+  const quickEndMode = () => !game && !riddle && !letters && (mode === "chat" || mode === "story");
+  let partialTimer = null, ignoreNativeUntil = 0, ignoredRow = 0;
+  // Ambient level is taken in the first 300 ms; a turn whose loudest moment never rose clearly above it is treated as TV/background.
+  let noise = null;
+  const noiseMargin = () => (cfg().tv ? 4 : 2.5);
+  function noiseThreshold() {
+    if (!noise || noise.amb === null) return null;
+    return Math.min(noise.amb + noiseMargin(), 8.5);
+  }
+  function soundsLikeBackground() {
+    const th = noiseThreshold();
+    if (th === null || noise.n < 3) return false; // not enough level data: never drop
+    return noise.peak < th;
+  }
+  function clearPartialTimer() { clearTimeout(partialTimer); partialTimer = null; }
+  function armQuickEnd() {
+    clearPartialTimer();
+    if (!quickEndMode() || !lastPartial.trim()) return;
+    const seen = lastPartial;
+    partialTimer = setTimeout(function check() {
+      partialTimer = null;
+      if (state !== "listening" || lastPartial !== seen || !quickEndMode()) return;
+      // Still loud right now? She is probably mid-word; look again shortly.
+      if (noise && performance.now() - noise.lastLoud < 450) { partialTimer = setTimeout(check, 200); return; }
+      ignoreNativeUntil = Date.now() + 3000; // a late native result/error for this turn is ignored
+      A.stopListening();
+      window.onHeard(seen);
+    }, 750);
+  }
+  // Silently drops a turn that was not meant for the robot; re-listens a couple of times at most.
+  function ignoreTurn() {
+    setState("idle");
+    const c = cfg();
+    if (userEngaged && c.auto && !c.tv && !anySheetOpen() && ignoredRow < 2) {
+      ignoredRow++;
+      setTimeout(() => { if (state === "idle") listenNow(); }, 350);
+    } else { ignoredRow = 0; updateHint(); }
+  }
   window.onListenStart = () => {
-    setState("listening"); lastPartial = "";
+    setState("listening"); lastPartial = ""; clearPartialTimer(); ignoreNativeUntil = 0;
+    noise = { t0: performance.now(), ambS: [], amb: null, peak: -99, n: 0, lastLoud: 0 };
     if (game || riddle || letters) {
       const cue = document.createElement("div"); cue.className = "sayNow"; cue.textContent = "🎤 Şimdi söyle!";
       bubble.querySelector(".sayNow")?.remove(); bubble.appendChild(cue);
     } else if (cfg().fx) { bell(NOTE(79), 0, 0.08, 0.5); bell(NOTE(86), 0.08, 0.08, 0.6); }
   };
-  window.onLevel = (rms) => { if (window.Alive) Alive.level(rms); if (state === "listening") ring.style.transform = `scale(${1 + Math.max(0, Math.min(10, parseFloat(rms))) / 140})`; };
+  window.onLevel = (rms) => {
+    if (window.Alive) Alive.level(rms);
+    if (state !== "listening") return;
+    ring.style.transform = `scale(${1 + Math.max(0, Math.min(10, parseFloat(rms))) / 140})`;
+    const v = parseFloat(rms);
+    if (!noise || isNaN(v)) return;
+    const now = performance.now();
+    if (now - noise.t0 < 300) { noise.ambS.push(v); return; }
+    if (noise.amb === null) noise.amb = noise.ambS.length ? Math.min(...noise.ambS) : null;
+    noise.n++;
+    if (v > noise.peak) noise.peak = v;
+    const th = noiseThreshold();
+    if (th === null ? v > 3 : v >= th) noise.lastLoud = now;
+  };
   window.onPartial = (t) => {
     if (state !== "listening") return;
-    lastPartial = t;
+    if (t !== lastPartial) { lastPartial = t; armQuickEnd(); }
     if (!game && !riddle && !letters) return show(t, "");
     // Accept the right number the moment it is heard instead of waiting for the end of speech.
     if (game && game.q && !game.q.done && parseNumber(t.toLocaleLowerCase("tr")) === game.q.ans) { A.stopListening(); gameHeard(t); }
   };
   window.onNothingHeard = () => {
+    if (state !== "listening" && Date.now() < ignoreNativeUntil) return;
+    clearPartialTimer();
+    // The recognizer sometimes gives up although it caught words along the way.
+    if (state === "listening" && quickEndMode() && lastPartial.trim()) return window.onHeard(lastPartial);
     setState("idle"); autoTurns = 0;
     if (game) {
       if (game.q.done) return;
@@ -1449,8 +1525,13 @@ Sınav konuları: ${examRun.exam.topics.join(", ")}.
     if (riddle || letters) { hint.textContent = "Cevabını söylemek için robota dokun"; return; }
     if (!bubble.textContent) show("", "Seni duyamadım. Bana dokunup tekrar konuşur musun?");
   };
-  window.onListenError = (msg) => { setState("idle"); show("", msg); };
+  window.onListenError = (msg) => { if (state !== "listening" && Date.now() < ignoreNativeUntil) return; clearPartialTimer(); setState("idle"); show("", msg); };
+  let heardFromMic = false, pendingNote = null;
   window.onHeard = (text) => {
+    // Native results arrive while listening; typed text and app-made turns do not.
+    const fromMic = state === "listening";
+    if (!fromMic && Date.now() < ignoreNativeUntil) return; // late native result after a quick end (typed text clears this)
+    clearPartialTimer();
     if (game) {
       if (game.q.done) return;
       game.misses = 0;
@@ -1459,14 +1540,19 @@ Sınav konuları: ${examRun.exam.topics.join(", ")}.
     }
     if (riddle) return riddleHeard(text);
     if (letters) return lettersHeard(text);
+    // TV / far-away voices: the level never rose clearly above the room's background.
+    if (fromMic && mode !== "read" && soundsLikeBackground()) { noise = null; return ignoreTurn(); }
+    noise = null;
+    heardFromMic = fromMic;
     if (coStory) coStory.lines.push({ by: "kid", t: text });
     if (mode === "chat") bump("chats");
-    if (window.Alive) Alive.noteHeard(text, mode);
+    pendingNote = { text, mode }; // noted once the answer shows it was meant for the robot
     setState("thinking");
     show(text, "");
     if (mode === "english") bump("english");
-    let content = text, effort = "low";
+    let content = text, effort = "low", withImage = false;
     if (pendingImage) {
+      withImage = true;
       // Only the newest photo is kept in full; older ones become a short note to keep requests small.
       history.forEach((m) => {
         if (Array.isArray(m.content)) m.content = m.content.filter((b) => b.type === "text").map((b) => b.text).join(" ") + " (önceki fotoğraf)";
@@ -1479,13 +1565,137 @@ Sınav konuları: ${examRun.exam.topics.join(", ")}.
     history.push({ role: "user", content });
     history = history.slice(-20);
     while (history.length && history[0].role !== "user") history.shift();
-    A.ask(systemPrompt(), JSON.stringify(history), effort);
+    const sys = systemPrompt();
+    if (withImage) A.ask(sys, JSON.stringify(history), effort);
+    else streamAsk(sys, history.slice(), effort, text);
   };
-  window.onAnswer = (text) => {
-    if (routineVerify && routineVerify.asked) return routineVerdict(text);
+
+  // ---------- streaming answers: speech starts with the first finished sentence ----------
+  let live = null;
+  const stripFigure = (t) => t.replace(/<svg[\s\S]*?(<\/svg>|$)/gi, " ").replace(/```\w*/g, "");
+  // Index just after the last complete sentence of s that is safe to speak (outside [tags] and {english}, before any drawing).
+  function speakableCut(s) {
+    let stop = s.length;
+    [s.search(/<svg/i), s.indexOf("```"), s.indexOf("<")].forEach((i) => { if (i >= 0 && i < stop) stop = i; });
+    let depth = 0, cut = 0;
+    for (let i = 0; i < stop; i++) {
+      const ch = s[i];
+      if (ch === "[" || ch === "{") depth++;
+      else if ((ch === "]" || ch === "}") && depth > 0) depth--;
+      else if (depth === 0 && ".!?…\n".includes(ch)) {
+        let j = i + 1;
+        while (j < stop && /[.!?…"'”’)]/.test(s[j])) j++;
+        if (j < stop && /\s/.test(s[j])) { cut = j; i = j; }
+      }
+    }
+    return cut;
+  }
+  function livePull(L) {
+    const rest = L.raw.slice(L.spoken), cut = speakableCut(rest);
+    if (!cut) return [];
+    L.spoken += cut;
+    show(L.asked, cleanText(stripFigure(L.raw.slice(0, L.spoken))));
+    return parseReply(rest.slice(0, cut));
+  }
+  function liveOwnState(L, s) { L.own = true; setState(s); L.own = false; }
+  function liveDelta(L, t) {
+    L.raw += t;
+    if (L.cancelled || L.none || live !== L) return;
+    if (/\[\s*YOK\s*\]/i.test(L.raw)) { L.none = true; return; }
+    if (!L.started) {
+      const cut = speakableCut(L.raw);
+      if (!cut) return;
+      if (state !== "thinking") { L.cancelled = true; return; }
+      L.started = true;
+      liveOwnState(L, "speaking"); // clears queue and afterSpeak
+      rateMul = mode === "story" ? 0.85 : 1;
+      queue = livePull(L);
+      nextStep();
+    } else if (L.waiting && state === "speaking") {
+      const more = livePull(L);
+      if (more.length) { L.waiting = false; queue.push(...more); nextStep(); }
+    }
+  }
+  /** Finishes a streamed reply: speaks what is left, then `then` (or the usual auto-listen). */
+  function liveFinish(L, fallbackText, then) {
+    if (L.cancelled) return;
+    if (!L.started) return perform(fallbackText, then);
+    if (state !== "speaking") return;
+    const rest = stripFigure(L.raw.slice(L.spoken));
+    L.spoken = L.raw.length;
+    queue.push(...parseReply(rest));
+    afterSpeak = then || null;
+    if (L.waiting) { L.waiting = false; setTimeout(nextStep, 0); } // let onAnswer finish its bookkeeping first
+  }
+  async function streamAsk(sys, msgs, effort, askedText) {
+    const key = A.get("apiKey", "").trim();
+    const fallback = () => A.ask(sys, JSON.stringify(msgs), effort);
+    if (!key || !window.fetch || !window.TextDecoder || !window.ReadableStream) return fallback();
+    if (live) live.cancelled = true;
+    const L = live = { raw: "", spoken: 0, started: false, open: true, own: false, cancelled: false, none: false, waiting: false, asked: askedText };
+    const model = A.get("model", MODEL_DEFAULT);
+    const maxTokens = mode === "story" ? 2500 : (mode === "chat" || mode === "lesson" || mode === "exam") ? 1500 : 800; // room for an SVG figure
+    const reqBody = { model, max_tokens: maxTokens, system: sys, messages: msgs, output_config: { effort }, stream: true };
+    const headers = { "content-type": "application/json", "x-api-key": key, "anthropic-version": "2023-06-01", "anthropic-dangerous-direct-browser-access": "true" };
+    if (/^claude-(opus|sonnet)/.test(model)) { reqBody.fallbacks = "default"; headers["anthropic-beta"] = "server-side-fallback-2026-07-01"; }
+    const ctrl = window.AbortController ? new AbortController() : null;
+    let timer = setTimeout(() => ctrl && ctrl.abort(), 20000);
+    let stop = "";
+    try {
+      const res = await fetch("https://api.anthropic.com/v1/messages", { method: "POST", headers, body: JSON.stringify(reqBody), signal: ctrl ? ctrl.signal : undefined });
+      if (!res.ok || !res.body) throw new Error("http " + res.status);
+      const reader = res.body.getReader(), dec = new TextDecoder();
+      let buf = "";
+      for (;;) {
+        clearTimeout(timer); timer = setTimeout(() => ctrl && ctrl.abort(), 30000); // stalled stream
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += dec.decode(value, { stream: true });
+        let nl;
+        while ((nl = buf.indexOf("\n")) >= 0) {
+          const line = buf.slice(0, nl).trim(); buf = buf.slice(nl + 1);
+          if (!line.startsWith("data:")) continue;
+          let ev; try { ev = JSON.parse(line.slice(5)); } catch (e) { continue; }
+          if (ev.type === "content_block_delta" && ev.delta && ev.delta.type === "text_delta") liveDelta(L, ev.delta.text || "");
+          else if (ev.type === "message_delta" && ev.delta && ev.delta.stop_reason) stop = ev.delta.stop_reason;
+          else if (ev.type === "error") throw new Error((ev.error && ev.error.message) || "stream error");
+        }
+      }
+      clearTimeout(timer);
+    } catch (e) {
+      clearTimeout(timer);
+      if (!L.started) { L.open = false; if (live === L) live = null; if (!L.cancelled) fallback(); return; } // nothing spoken yet: the old path answers
+      // Speech already started: finish with what arrived.
+    }
+    L.open = false;
+    const superseded = live !== L;
+    if (live === L) live = null;
+    if (superseded) return;
+    let text = L.raw.trim();
+    if (stop === "refusal" && !L.started) text = "Bu konuyu konuşamam ama başka bir şey sorabilirsin. İstersen bir bilmece sorayım mı?";
+    window.onAnswer(text, L);
+  }
+  window.onAnswer = (text, L) => {
+    if (routineVerify && routineVerify.asked && !L) return routineVerdict(text);
+    // [YOK]: the words were TV/background, not for the robot. Say nothing and forget the turn.
+    if (text && /\[\s*YOK\s*\]/i.test(text)) {
+      if (heardFromMic) {
+        pendingNote = null;
+        if (history.length && history[history.length - 1].role === "user") history.pop();
+        if (coStory && coStory.lines.length && coStory.lines[coStory.lines.length - 1].by === "kid") coStory.lines.pop();
+        if (L && L.cancelled) return;
+        show("", ""); return ignoreTurn();
+      }
+      text = "Hmm, tam anlayamadım. Bir daha söyler misin?"; // typed text is never TV
+    }
+    ignoredRow = 0;
+    if (pendingNote && window.Alive) Alive.noteHeard(pendingNote.text, pendingNote.mode);
+    pendingNote = null;
     if (!text) text = "Hmm, ne diyeceğimi bilemedim. Tekrar sorar mısın?";
     text = takeFigure(text);
     history.push({ role: "assistant", content: text });
+    if (L && L.cancelled) return; // she moved on while it was streaming: keep it in history, don't speak
+    const say = L ? (t, then) => liveFinish(L, t, then) : perform;
     const asked = history[history.length - 2];
     const askedText = asked ? (Array.isArray(asked.content) ? "📷 " + asked.content[1].text : asked.content) : "";
     show(askedText, cleanText(text));
@@ -1493,7 +1703,7 @@ Sınav konuları: ${examRun.exam.topics.join(", ")}.
     if (!sessionCounted && mode === "lesson") { sessionCounted = true; bump("lessons"); }
     if (coStory) {
       coStory.lines.push({ by: "bot", t: cleanText(text) });
-      perform(text);
+      say(text);
       if (coStory.done) {
         finishCoStory();
         afterSpeak = () => { show("", `📚 "${coStory.title || "Bizim masalımız"}" Masallarım'a kaydedildi! +2 ⭐`); celebrate(coStory.cover || "📖", "Masal kaydedildi!"); };
@@ -1502,10 +1712,10 @@ Sınav konuları: ${examRun.exam.topics.join(", ")}.
     }
     if (mode === "story" && text.length > 400) {
       bump("stories");
-      perform(text, () => setSleeping(true));
+      say(text, () => setSleeping(true));
       return;
     }
-    perform(text);
+    say(text);
   };
   // ---------- in-app camera: the child's phone may only allow this app, so no separate camera app is opened ----------
   let snap = null;
@@ -2695,6 +2905,7 @@ Cevabının en başına yalnızca [onay] ya da [ret] yaz. Sonra Türkçe, sesli 
     if (state === "listening") { A.stopListening(); setState("idle"); }
     if (state === "thinking") return;
     autoTurns = 99; // after typing, don't jump straight back to the microphone
+    ignoreNativeUntil = 0;
     onHeard(t);
   }
   $("typeSend").addEventListener("click", sendTyped);
@@ -3394,6 +3605,7 @@ Soru tarzı ve beklenen cevaplar: insanın vahye neden ihtiyaç duyduğu ve vahy
     $("parentRules").value = A.get("parentRules", "");
     $("grade").value = c.grade; $("auto").value = c.auto ? "1" : "0"; $("fx").value = c.fx ? "1" : "0";
     $("watch").value = A.get("watch", "1");
+    $("tvMode").value = A.get("tvMode", "0");
     $("overlay").value = A.overlayOn() ? "1" : "0";
     const [r, p, v] = A.getVoice().split(","); $("rate").value = r; $("pitch").value = p;
     fillVoices(v || "");
@@ -3422,6 +3634,7 @@ Soru tarzı ve beklenen cevaplar: insanın vahye neden ihtiyaç duyduğu ve vahy
     A.set("auto", $("auto").value);
     A.set("fx", $("fx").value);
     A.set("watch", $("watch").value);
+    A.set("tvMode", $("tvMode").value);
     A.setVoice($("rate").value, $("pitch").value, $("voice").value);
     saveCloudFields();
     const wantOverlay = $("overlay").value === "1";
