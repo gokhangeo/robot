@@ -1,35 +1,31 @@
 #!/bin/bash
-# Builds robot-arkadas.apk without Gradle: javac -> dx -> aapt2 -> align -> apksig.
+# Builds robot-arkadas.apk with the Android SDK command-line tools (no Gradle):
+# aapt2 (resources) -> javac -> d8 (dex) -> zipalign -> apksigner.
+# Runs on GitHub Actions (.github/workflows/build-apk.yml); locally it needs JDK 17 and an Android SDK
+# with platforms;android-34 and build-tools;34.0.0. Signing: KEYSTORE=path/to/release.p12 KEYSTORE_PASSWORD=... ./build.sh
 set -euo pipefail
 cd "$(dirname "$0")"
-SDK_JAR=${ANDROID_JAR:-/root/android-sdk/platforms/android-34/android.jar}
-T=${TOOLS:-/root/tools}
+SDK=${ANDROID_HOME:-${ANDROID_SDK_ROOT:-$HOME/Android/Sdk}}
+BT=${BUILD_TOOLS:-$SDK/build-tools/34.0.0}
+SDK_JAR=${ANDROID_JAR:-$SDK/platforms/android-34/android.jar}
+KS=${KEYSTORE:-release.p12}
 B=build
 rm -rf $B && mkdir -p $B/classes $B/res $B/dex $B/gen
 
-# 1. resources -> R.java + resource APK, then Java -> .class (Java 8 bytecode, downgraded to v50 for the old dx)
-$T/aapt2 compile --dir res -o $B/res/res.zip
-$T/aapt2 link -I "$SDK_JAR" --manifest AndroidManifest.xml -A assets --java $B/gen -o $B/unsigned.apk $B/res/res.zip
+# 1. resources -> R.java + resource APK (assets bundled as the offline fallback of the web UI)
+"$BT/aapt2" compile --dir res -o $B/res/res.zip
+"$BT/aapt2" link -I "$SDK_JAR" --manifest AndroidManifest.xml -A assets --java $B/gen -o $B/unsigned.apk $B/res/res.zip
+
+# 2. Java -> .class -> classes.dex
 javac -nowarn -Xlint:-options -source 8 -target 8 -encoding UTF-8 -bootclasspath "$SDK_JAR" -d $B/classes $(find src $B/gen -name '*.java')
-python3 - "$B/classes" <<'PY'
-import sys, pathlib
-for p in pathlib.Path(sys.argv[1]).rglob("*.class"):
-    b = bytearray(p.read_bytes()); b[6:8] = (50).to_bytes(2, "big"); p.write_bytes(b)
-PY
-
-# 2. .class -> classes.dex
-java -cp $T/dx-1.7.jar com.android.dx.command.Main --dex --output=$B/dex/classes.dex $B/classes
-
-# 3. add code to the resource APK
+"$BT/d8" --release --min-api 26 --lib "$SDK_JAR" --output $B/dex $(find $B/classes -name '*.class')
 (cd $B/dex && zip -q -j ../unsigned.apk classes.dex)
 
-# 4. align + sign
-python3 tools/align.py $B/unsigned.apk $B/aligned.apk
-KS=${KEYSTORE:-release.p12}
-if [ ! -f "$KS" ]; then
-  keytool -genkeypair -storetype PKCS12 -keystore "$KS" -storepass robot123 -alias robot \
-    -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Robot Arkadas" >/dev/null 2>&1
-fi
-mkdir -p $B/signer && javac -nowarn -cp $T/apksig-2.3.0.jar -d $B/signer tools/Sign.java
-java --add-exports java.base/sun.security.x509=ALL-UNNAMED --add-exports java.base/sun.security.pkcs=ALL-UNNAMED --add-exports java.base/sun.security.util=ALL-UNNAMED -cp $T/apksig-2.3.0.jar:$B/signer Sign $B/aligned.apk robot-arkadas.apk "$KS" robot123 robot
+# 3. align + sign (APK signature v2+v3; the key must stay the same for every future build, see README)
+"$BT/zipalign" -f -p 4 $B/unsigned.apk $B/aligned.apk
+if [ ! -f "$KS" ]; then echo "Keystore $KS not found (set KEYSTORE)"; exit 1; fi
+"$BT/apksigner" sign --ks "$KS" --ks-type PKCS12 --ks-pass env:KEYSTORE_PASSWORD --ks-key-alias robot \
+  --min-sdk-version 26 --v1-signing-enabled false --v2-signing-enabled true --v3-signing-enabled true \
+  --out robot-arkadas.apk $B/aligned.apk
+"$BT/apksigner" verify --print-certs robot-arkadas.apk
 ls -la robot-arkadas.apk

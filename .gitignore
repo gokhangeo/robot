@@ -1,3 +1,4 @@
 build/
 release.p12
 *.p12
+build-test/

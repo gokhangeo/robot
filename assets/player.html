@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<meta name="referrer" content="strict-origin-when-cross-origin">
+<style>
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; height: 100%; background: #0d1117; color: #f2f5f7; font-family: "Nunito", "Roboto", system-ui, sans-serif; }
+  body { display: flex; flex-direction: column; }
+  #stage { flex: none; width: 100%; background: #000; position: relative; }
+  #stage.yt { aspect-ratio: 16 / 9; max-height: 62vh; }
+  #stage.sp { height: 352px; max-height: 58vh; background: #0d1117; padding: 6px 8px 0; }
+  #stage iframe, #stage > div { width: 100%; height: 100%; border: 0; display: block; }
+  #msg { padding: 10px 14px; font-size: 15px; color: #c9d1d9; display: none; text-align: center; }
+  #msg.show { display: block; }
+  .acts { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; padding: 8px 10px 0; }
+  .acts button { border: 0; border-radius: 999px; padding: 9px 14px; font: inherit; font-size: 13px; font-weight: 800; background: #1db954; color: #0d1117; }
+  .acts button.ghost { background: #2a3240; color: #f2f5f7; }
+  #list { flex: 1; overflow-y: auto; padding: 8px 8px 16px; }
+  #list h4 { margin: 4px 6px 8px; font-size: 13px; color: #8a94a3; font-weight: 700; }
+  .it { display: flex; gap: 10px; align-items: center; padding: 6px; border-radius: 12px; margin-bottom: 4px; }
+  .it.on { background: #1f2b3a; }
+  .it img { width: 112px; height: 63px; object-fit: cover; border-radius: 8px; flex: none; background: #222; }
+  .it.sp img { width: 56px; height: 56px; }
+  .it b { display: block; font-size: 14px; line-height: 1.25; max-height: 2.5em; overflow: hidden; }
+  .it small { color: #8a94a3; font-size: 12px; }
+</style>
+</head>
+<body>
+<div id="stage"></div>
+<div id="msg"></div>
+<div class="acts" id="acts"></div>
+<div id="list"></div>
+<script>
+  // Media panel inside the app: YouTube (IFrame Player API) and Spotify (embed iFrame API).
+  // The native side loads this page with an https base URL so YouTube receives a Referer (no error 152/153).
+  const M = window.Media || { close() {}, ended() {}, playing() {}, failed() {}, openSpotifyApp() {}, spotifyLogin() {}, spotifyWeb() {} };
+  const $ = (id) => document.getElementById(id);
+  let cur = null, ytPlayer = null, spCtrl = null, ytReady = false, ytWant = null, spApi = null, spWant = null, failCount = 0;
+  const esc = (s) => String(s || "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+  function msg(t) { $("msg").textContent = t || ""; $("msg").classList.toggle("show", !!t); }
+
+  window.loadMedia = (json) => {
+    cur = typeof json === "string" ? JSON.parse(json) : json;
+    cur.index = 0; failCount = 0;
+    msg(""); renderActs(); renderList();
+    if (!cur.items || !cur.items.length) {
+      $("stage").className = ""; $("stage").innerHTML = "";
+      if (cur.kind === "spotify") msg("Spotify'da bunu bulamadım. Aşağıdan Spotify'da arayabilirsin.");
+      else msg("Bu videoyu bulamadım. Başka bir şey dener misin?");
+      return;
+    }
+    play(0);
+  };
+  function renderActs() {
+    const a = $("acts"); a.innerHTML = "";
+    if (cur.kind !== "spotify") return;
+    const add = (label, fn, ghost) => { const b = document.createElement("button"); b.textContent = label; if (ghost) b.className = "ghost"; b.onclick = fn; a.appendChild(b); };
+    add("Spotify uygulamasında aç", () => {
+      const it = cur.items && cur.items[cur.index];
+      M.openSpotifyApp(it ? `spotify:${it.type}:${it.id}` : `spotify:search:${cur.q}`);
+    });
+    add("Spotify'da ara", () => M.spotifyWeb(cur.q || ""), true);
+    add("Spotify'a giriş yap", () => M.spotifyLogin(), true);
+  }
+  function renderList() {
+    const l = $("list"); l.innerHTML = "";
+    if (!cur.items || cur.items.length < 2) return;
+    const h = document.createElement("h4"); h.textContent = cur.kind === "spotify" ? "Başka sonuçlar" : "Başka videolar"; l.appendChild(h);
+    cur.items.forEach((it, i) => {
+      const d = document.createElement("div"); d.className = "it" + (cur.kind === "spotify" ? " sp" : "") + (i === cur.index ? " on" : "");
+      d.innerHTML = `${it.thumb ? `<img src="${esc(it.thumb)}" alt="">` : `<img alt="">`}<div><b>${esc(it.title || (it.type === "playlist" ? "Çalma listesi" : "Şarkı"))}</b><small>${esc([it.sub, it.len].filter(Boolean).join(" · "))}</small></div>`;
+      d.onclick = () => play(i);
+      l.appendChild(d);
+    });
+  }
+  function play(i) {
+    cur.index = i; renderList();
+    const it = cur.items[i];
+    M.playing(it.title || "");
+    if (cur.kind === "spotify") {
+      if (ytPlayer) { try { ytPlayer.destroy(); } catch (e) { } ytPlayer = null; }
+      return playSpotify(it);
+    }
+    if (spCtrl) { try { spCtrl.destroy ? spCtrl.destroy() : spCtrl.pause(); } catch (e) { } spCtrl = null; }
+    if ($("stage").className !== "yt") { $("stage").innerHTML = ""; ytPlayer = null; }
+    $("stage").className = "yt";
+    if (!ytReady) { ytWant = it.id; return; }
+    if (ytPlayer) { try { ytPlayer.loadVideoById(it.id); return; } catch (e) { } }
+    $("stage").innerHTML = '<div id="yt"></div>';
+    ytPlayer = new YT.Player("yt", {
+      videoId: it.id, width: "100%", height: "100%",
+      playerVars: { autoplay: 1, playsinline: 1, rel: 0, modestbranding: 1, fs: 1, iv_load_policy: 3, origin: location.origin },
+      events: {
+        onReady: (e) => { try { e.target.playVideo(); } catch (x) { } },
+        onStateChange: (e) => { if (e.data === 0) M.ended(); if (e.data === 1) failCount = 0; },
+        onError: (e) => {
+          // 100 removed, 101/150 embedding off, 152/153 referrer problems: try the next result.
+          failCount++;
+          if (failCount < cur.items.length && cur.index + 1 < cur.items.length) { msg("Bu video burada açılmıyor, sıradakini deniyorum…"); setTimeout(() => { msg(""); play(cur.index + 1); }, 600); }
+          else { msg("Bu videolar uygulama içinde açılamadı (hata " + e.data + ")."); M.failed("youtube " + e.data); }
+        }
+      }
+    });
+  }
+  window.onYouTubeIframeAPIReady = () => {
+    ytReady = true;
+    if (ytWant && cur) { const id = ytWant; ytWant = null; const i = cur.items.findIndex((x) => x.id === id); play(Math.max(0, i)); }
+  };
+  function playSpotify(it) {
+    const st = $("stage");
+    st.className = "sp";
+    const uri = `spotify:${it.type}:${it.id}`;
+    if (spApi) {
+      st.innerHTML = '<div id="sp"></div>';
+      spApi.createController($("sp"), { uri, width: "100%", height: "100%" }, (ctrl) => {
+        spCtrl = ctrl;
+        ctrl.addListener("ready", () => { try { ctrl.play(); } catch (e) { } });
+        ctrl.addListener("playback_update", (e) => { const d = e && e.data; if (d && !d.isPaused && d.duration && d.position >= d.duration - 400) M.ended(); });
+      });
+    } else {
+      spWant = it;
+      st.innerHTML = `<iframe src="https://open.spotify.com/embed/${it.type}/${it.id}?utm_source=generator" allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture"></iframe>`;
+    }
+  }
+  window.onSpotifyIframeApiReady = (api) => {
+    spApi = api;
+    if (spWant && cur && cur.kind === "spotify") { const it = spWant; spWant = null; playSpotify(it); }
+  };
+  window.mediaPause = () => { try { ytPlayer && ytPlayer.pauseVideo(); } catch (e) { } try { spCtrl && spCtrl.pause(); } catch (e) { } };
+  window.mediaResume = () => { try { ytPlayer && ytPlayer.playVideo(); } catch (e) { } try { spCtrl && spCtrl.resume(); } catch (e) { } };
+  window.mediaStop = () => { try { ytPlayer && ytPlayer.stopVideo(); } catch (e) { } try { spCtrl && spCtrl.pause(); } catch (e) { } $("stage").innerHTML = ""; ytPlayer = null; spCtrl = null; };
+</script>
+<script src="https://www.youtube.com/iframe_api" async></script>
+<script src="https://open.spotify.com/embed/iframe-api/v1" async></script>
+</body>
+</html>

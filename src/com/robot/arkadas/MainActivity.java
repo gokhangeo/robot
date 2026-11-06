@@ -10,6 +10,7 @@ import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.Color;
 import android.graphics.Matrix;
+import android.media.AudioFormat;
 import android.media.ExifInterface;
 import android.media.MediaPlayer;
 import android.net.Uri;
@@ -17,6 +18,7 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.ParcelFileDescriptor;
 import android.provider.MediaStore;
 import android.provider.Settings;
 import android.speech.RecognitionListener;
@@ -26,14 +28,22 @@ import android.speech.tts.TextToSpeech;
 import android.speech.tts.UtteranceProgressListener;
 import android.speech.tts.Voice;
 import android.util.Base64;
+import android.view.Gravity;
 import android.view.View;
+import android.view.ViewGroup;
 import android.view.WindowManager;
+import android.webkit.CookieManager;
 import android.webkit.JavascriptInterface;
 import android.webkit.PermissionRequest;
 import android.webkit.WebChromeClient;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
+import android.webkit.WebResourceRequest;
 import android.webkit.WebViewClient;
+import android.widget.Button;
+import android.widget.FrameLayout;
+import android.widget.LinearLayout;
+import android.widget.TextView;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -48,6 +58,8 @@ import java.net.URL;
 import java.util.ArrayList;
 import java.util.Locale;
 import java.util.Set;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 public class MainActivity extends Activity {
 
@@ -81,6 +93,31 @@ public class MainActivity extends Activity {
     private String pendingPhoto = null;
     private boolean pendingCancel = false, cameraOpen = false;
     private PermissionRequest pendingCameraRequest;
+
+    // hearing
+    private final Hearing hearing = new Hearing();
+    private int listenSeq = 0;
+    private long cloudBackoffUntil = 0;
+    private boolean pipeBad = false, usingPipe = false, gotReady = false, pttGoogle = false;
+    private int pipeMisses = 0;
+    private ParcelFileDescriptor pipeRead;
+    private String lastLang = "tr-TR";
+    private long lastSilence = 1500;
+    private boolean lastPtt = false;
+    private final ExecutorService prefetcher = Executors.newSingleThreadExecutor();
+
+    // media panel (YouTube / Spotify)
+    private FrameLayout root;
+    private LinearLayout mediaBox;
+    private WebView mediaWeb;
+    private TextView mediaTitle;
+    private Button mediaBack;
+    private boolean mediaOpen = false, playerMode = false, playerLoaded = false;
+    private String pendingMedia = null, lastMedia = null;
+    private int mediaSeq = 0;
+    private View customView;
+    private WebChromeClient.CustomViewCallback customViewCallback;
+    static final String PLAYER_BASE = "https://gokhangeo.github.io/pamuk/";
 
     @Override
     protected void onCreate(Bundle state) {
@@ -135,7 +172,10 @@ public class MainActivity extends Activity {
         });
         web.setOverScrollMode(View.OVER_SCROLL_NEVER);
         web.addJavascriptInterface(new Bridge(), "Android");
-        setContentView(web);
+        root = new FrameLayout(this);
+        root.setBackgroundColor(Color.parseColor("#141414"));
+        root.addView(web, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        setContentView(root);
         web.loadUrl(WebAssets.url(this, "index.html"));
         checkForUpdate(false);
         handleIntent(getIntent());
@@ -211,6 +251,7 @@ public class MainActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
+        if (mediaWeb != null) mediaWeb.onResume();
         RobotOverlayService.setHidden(true);
         if (wantOverlay) {
             wantOverlay = false;
@@ -246,8 +287,12 @@ public class MainActivity extends Activity {
     protected void onPause() {
         super.onPause();
         RobotOverlayService.setHidden(false);
-        if (recognizer != null) recognizer.cancel();
+        cancelListening();
         stopAllSpeech();
+        if (mediaWeb != null) {
+            mediaWeb.evaluateJavascript("window.mediaPause&&mediaPause()", null);
+            mediaWeb.onPause();
+        }
         js("onPaused");
     }
 
@@ -256,6 +301,9 @@ public class MainActivity extends Activity {
         if (player != null) player.release();
         if (recognizer != null) recognizer.destroy();
         if (tts != null) tts.shutdown();
+        hearing.cancel();
+        prefetcher.shutdownNow();
+        if (mediaWeb != null) mediaWeb.destroy();
         super.onDestroy();
     }
 
@@ -320,33 +368,124 @@ public class MainActivity extends Activity {
     // ---------- listening ----------
 
     private void startListening() {
-        startListening("tr-TR", 1500);
+        startListening("tr-TR", 1500, false);
     }
 
-    /** lang: recognizer language ("tr-TR" or "en-US"); silenceMs: how long a pause ends the turn. */
     private void startListening(String lang, long silenceMs) {
+        startListening(lang, silenceMs, false);
+    }
+
+    /** The cloud ear the parent set up (Deepgram > Groq > Gemini), or null for the phone's own recognizer. */
+    private Hearing.Engine cloudEngine() {
+        String k = prefs.getString("deepgramKey", "").trim();
+        if (!k.isEmpty()) return new Hearing.Engine("deepgram", k, prefs.getString("deepgramModel", "nova-3").trim());
+        k = prefs.getString("groqKey", "").trim();
+        if (!k.isEmpty()) return new Hearing.Engine("groq", k, prefs.getString("groqModel", "whisper-large-v3-turbo").trim());
+        k = prefs.getString("geminiKey", "").trim();
+        if (!k.isEmpty()) return new Hearing.Engine("gemini", k, prefs.getString("geminiModel", "").trim());
+        return null;
+    }
+
+    private ArrayList<String> keyterms() {
+        ArrayList<String> out = new ArrayList<String>();
+        String[] base = {prefs.getString("botName", "Pamuk"), prefs.getString("kidName", ""), "Pamuk", "Spotify", "YouTube",
+                "şarkı", "video", "masal", "bilmece", "şarkı aç", "video aç"};
+        for (String b : base) {
+            if (b == null) continue;
+            b = b.trim();
+            if (!b.isEmpty() && !out.contains(b)) out.add(b);
+        }
+        return out;
+    }
+
+    /** Stops whatever is listening (cloud recording, pipe feed, phone recognizer) without any callback. */
+    private void cancelListening() {
+        listenSeq++;
+        hearing.cancel();
+        if (recognizer != null) recognizer.cancel();
+        closePipe();
+    }
+
+    private void closePipe() {
+        if (pipeRead != null) {
+            try { pipeRead.close(); } catch (Exception ignored) { }
+            pipeRead = null;
+        }
+        usingPipe = false;
+    }
+
+    /** lang: "tr-TR" or "en-US"; silenceMs: how long a pause ends the turn; ptt: push-to-talk (ends on pttStop). */
+    private void startListening(String lang, long silenceMs, boolean ptt) {
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO}, REQ_MIC);
             js("onListenError", "Önce mikrofon iznini vermelisin.");
             return;
         }
+        stopAllSpeech();
+        cancelListening();
+        lastLang = lang; lastSilence = silenceMs; lastPtt = ptt;
+        Hearing.Engine eng = cloudEngine();
+        if (eng != null && System.currentTimeMillis() > cloudBackoffUntil) startCloud(eng, lang, silenceMs, ptt);
+        else startGoogle(lang, silenceMs, ptt);
+    }
+
+    private void startCloud(Hearing.Engine eng, final String lang, final long silenceMs, final boolean ptt) {
+        final int seq = listenSeq;
+        boolean strict = "1".equals(prefs.getString("tvMode", "0"));
+        hearing.listenCloud(eng, lang, silenceMs, ptt, strict, keyterms(), new Hearing.Cb() {
+            @Override public void onStart() { if (seq == listenSeq) js("onListenStart"); }
+            @Override public void onLevel(float level) { if (seq == listenSeq) js("onLevel", String.valueOf(level)); }
+            @Override public void onBusy() { if (seq == listenSeq) js("onHearingBusy"); }
+            @Override public void onHeard(String text) { if (seq == listenSeq) js("onHeard", text); }
+            @Override public void onNothing() { if (seq == listenSeq) js("onNothingHeard"); }
+            @Override
+            public void onFail(final String message) {
+                main.post(new Runnable() {
+                    @Override
+                    public void run() {
+                        if (seq != listenSeq) return;
+                        cloudBackoffUntil = System.currentTimeMillis() + 60000; // the phone's recognizer for a minute
+                        js("onHearingNote", message + " Şimdilik telefonun ses tanımasıyla dinliyorum.");
+                        if (ptt) js("onNothingHeard");
+                        else startGoogle(lang, silenceMs, false);
+                    }
+                });
+            }
+        });
+    }
+
+    private void startGoogle(final String lang, final long silenceMs, final boolean ptt) {
         if (!SpeechRecognizer.isRecognitionAvailable(this)) {
             js("onListenError", "Bu telefonda ses tanıma yok. Google uygulamasını yükleyin.");
             return;
         }
-        stopAllSpeech();
+        final int seq = listenSeq;
+        pttGoogle = ptt;
+        gotReady = false;
         if (recognizer == null) {
             recognizer = SpeechRecognizer.createSpeechRecognizer(this);
             recognizer.setRecognitionListener(new RecognitionListener() {
-                @Override public void onReadyForSpeech(Bundle b) { js("onListenStart"); }
+                @Override public void onReadyForSpeech(Bundle b) { gotReady = true; js("onListenStart"); }
                 @Override public void onBeginningOfSpeech() { }
-                @Override public void onRmsChanged(float rms) { js("onLevel", String.valueOf(rms)); }
+                @Override public void onRmsChanged(float rms) { if (!usingPipe) js("onLevel", String.valueOf(rms)); }
                 @Override public void onBufferReceived(byte[] buf) { }
                 @Override public void onEndOfSpeech() { }
                 @Override public void onEvent(int type, Bundle b) { }
 
                 @Override
                 public void onError(int error) {
+                    boolean wasPipe = usingPipe;
+                    hearing.cancel();
+                    closePipe();
+                    if (wasPipe && error != SpeechRecognizer.ERROR_NO_MATCH && error != SpeechRecognizer.ERROR_SPEECH_TIMEOUT
+                            && error != SpeechRecognizer.ERROR_NETWORK && error != SpeechRecognizer.ERROR_NETWORK_TIMEOUT
+                            && error != SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS) {
+                        // The recognizer did not accept our cleaned audio: use its own microphone from now on.
+                        pipeBad = true;
+                        startGoogle(lastLang, lastSilence, lastPtt);
+                        return;
+                    }
+                    if (wasPipe && ++pipeMisses >= 3) pipeBad = true; // repeatedly heard nothing through the pipe
                     if (error == SpeechRecognizer.ERROR_NETWORK || error == SpeechRecognizer.ERROR_NETWORK_TIMEOUT) {
                         js("onListenError", "İnternet bağlantısı yok gibi görünüyor.");
                     } else if (error == SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS) {
@@ -358,6 +497,9 @@ public class MainActivity extends Activity {
 
                 @Override
                 public void onResults(Bundle b) {
+                    hearing.cancel();
+                    closePipe();
+                    pipeMisses = 0;
                     ArrayList<String> list = b.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION);
                     if (list != null && !list.isEmpty() && list.get(0).trim().length() > 0) {
                         js("onHeard", list.get(0));
@@ -373,14 +515,65 @@ public class MainActivity extends Activity {
                 }
             });
         }
+        long silence = ptt ? 10000 : silenceMs;
         Intent i = new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
         i.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM);
         i.putExtra(RecognizerIntent.EXTRA_LANGUAGE, lang);
         i.putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, lang);
         i.putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true);
-        i.putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, silenceMs);
-        i.putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, silenceMs);
-        recognizer.startListening(i);
+        i.putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3);
+        i.putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, silence);
+        i.putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, silence);
+        if (Build.VERSION.SDK_INT >= 33) {
+            i.putStringArrayListExtra(RecognizerIntent.EXTRA_BIASING_STRINGS, keyterms());
+            // Feed the recognizer from our own recorder with the phone's call-quality noise suppression (TV noise).
+            if (!pipeBad && !"0".equals(prefs.getString("micEnhance", "1"))) {
+                ParcelFileDescriptor read = hearing.startPipe(new Hearing.Cb() {
+                    @Override public void onStart() { }
+                    @Override public void onLevel(float level) { js("onLevel", String.valueOf(level)); }
+                    @Override public void onBusy() { }
+                    @Override public void onHeard(String text) { }
+                    @Override public void onNothing() { }
+                    @Override public void onFail(String message) { }
+                });
+                if (read != null) {
+                    pipeRead = read;
+                    usingPipe = true;
+                    i.putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE, read);
+                    i.putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE_CHANNEL_COUNT, 1);
+                    i.putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE_ENCODING, AudioFormat.ENCODING_PCM_16BIT);
+                    i.putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE_SAMPLING_RATE, Hearing.RATE);
+                }
+            }
+        }
+        try {
+            recognizer.startListening(i);
+        } catch (Exception e) {
+            hearing.cancel();
+            closePipe();
+            js("onListenError", "Ses tanıma başlatılamadı.");
+            return;
+        }
+        if (usingPipe) {
+            // No "ready" within 3 s means the recognizer ignores outside audio: fall back to its own microphone.
+            main.postDelayed(new Runnable() {
+                @Override
+                public void run() {
+                    if (seq != listenSeq || gotReady || !usingPipe) return;
+                    pipeBad = true;
+                    if (recognizer != null) recognizer.cancel();
+                    hearing.cancel();
+                    closePipe();
+                    startGoogle(lang, silenceMs, ptt);
+                }
+            }, 3000);
+        }
+    }
+
+    /** Push-to-talk released: the cloud recording is sent, or the phone recognizer finishes with what it heard. */
+    private void pttRelease() {
+        if (hearing.active() && !usingPipe) hearing.finish();
+        else if (recognizer != null && pttGoogle) recognizer.stopListening();
     }
 
     // ---------- homework photo ----------
@@ -537,10 +730,19 @@ public class MainActivity extends Activity {
         tts.speak(text, TextToSpeech.QUEUE_FLUSH, null, "u" + System.currentTimeMillis());
     }
 
-    /** Speaks with a cloud voice (ElevenLabs or Google); falls back to the phone voice on any error. */
+    static final String DEFAULT_TTS = "edge";
+
+    private String ttsProvider() {
+        return prefs.getString("ttsProvider", DEFAULT_TTS);
+    }
+
+    /**
+     * Speaks with the chosen voice: Microsoft Edge neural (free, default), ElevenLabs or Google.
+     * A paid voice that fails falls back to the free Edge voice, and Edge falls back to the phone's own voice.
+     */
     private void speak(final String text, final boolean english, final float rateMul) {
         stopAllSpeech();
-        final String provider = prefs.getString("ttsProvider", "phone");
+        final String provider = ttsProvider();
         if ("phone".equals(provider)) {
             speakPhone(text, english, rateMul);
             return;
@@ -549,27 +751,67 @@ public class MainActivity extends Activity {
         new Thread(new Runnable() {
             @Override
             public void run() {
+                File mp3 = null;
+                String error = null;
                 try {
-                    final File mp3 = cloudAudio(provider, text, english, rateMul);
-                    main.post(new Runnable() {
-                        @Override
-                        public void run() { if (seq == speakSeq) playFile(mp3, seq); }
-                    });
-                } catch (final Exception e) {
-                    main.post(new Runnable() {
-                        @Override
-                        public void run() {
-                            if (seq != speakSeq) return;
-                            if (!cloudErrorShown) {
-                                cloudErrorShown = true;
-                                js("onCloudTtsError", e.getMessage() == null ? "Bulut sesi alınamadı" : e.getMessage());
-                            }
-                            speakPhone(text, english, rateMul);
-                        }
-                    });
+                    mp3 = "edge".equals(provider) ? edgeAudio(text, english, rateMul) : cloudAudio(provider, text, english, rateMul);
+                } catch (Exception e) {
+                    error = e.getMessage() == null ? "Bulut sesi alınamadı" : e.getMessage();
+                    if (!"edge".equals(provider)) {
+                        try { mp3 = edgeAudio(text, english, rateMul); } catch (Exception ignored) { }
+                    }
                 }
+                final File ready = mp3;
+                final String err = error;
+                main.post(new Runnable() {
+                    @Override
+                    public void run() {
+                        if (seq != speakSeq) return;
+                        if (err != null && !cloudErrorShown) {
+                            cloudErrorShown = true;
+                            js("onCloudTtsError", "edge".equals(provider) ? "Doğal ses şu an alınamadı (internet?)." : err, ready != null ? "edge" : "phone");
+                        }
+                        if (ready != null) playFile(ready, seq);
+                        else speakPhone(text, english, rateMul);
+                    }
+                });
             }
         }).start();
+    }
+
+    /** Synthesizes ahead the sentence that will be spoken next, so the voice does not pause between sentences. */
+    private void prefetch(final String text, final boolean english, final float rateMul) {
+        if (!"edge".equals(ttsProvider())) return; // only the free voice; paid ones would spend credits on skipped lines
+        prefetcher.execute(new Runnable() {
+            @Override
+            public void run() {
+                try { edgeAudio(text, english, rateMul); } catch (Exception ignored) { }
+            }
+        });
+    }
+
+    /** Free Microsoft Edge neural voice (Emel or Ahmet) as an MP3 file, cached. */
+    private File edgeAudio(String text, boolean english, float rateMul) throws Exception {
+        String voice = prefs.getString("edgeVoice", "tr-TR-EmelNeural");
+        if (english) voice = voice.contains("Ahmet") ? "en-US-GuyNeural" : "en-US-JennyNeural";
+        float rate = parseFloatOr(prefs.getString("edgeRate", "0"), 0f);
+        float pitch = parseFloatOr(prefs.getString("edgePitch", "0"), 0f);
+        int pct = Math.round(((1f + rate / 100f) * rateMul - 1f) * 100f);
+        pct = Math.max(-50, Math.min(100, pct));
+        int hz = Math.max(-40, Math.min(40, Math.round(pitch)));
+        String r = (pct >= 0 ? "+" : "") + pct + "%", p = (hz >= 0 ? "+" : "") + hz + "Hz";
+        File dir = new File(getCacheDir(), "voice");
+        dir.mkdirs();
+        File f = new File(dir, "e" + Integer.toHexString((voice + r + p + text).hashCode()) + ".mp3");
+        if (f.length() > 0) { f.setLastModified(System.currentTimeMillis()); return f; }
+        byte[] audio = EdgeTts.synth(text, voice, r, p);
+        File tmp = new File(dir, f.getName() + "." + Thread.currentThread().getId() + ".tmp");
+        FileOutputStream fo = new FileOutputStream(tmp);
+        fo.write(audio);
+        fo.close();
+        tmp.renameTo(f);
+        trimCache(dir);
+        return f;
     }
 
     private void playFile(File f, final int seq) {
@@ -728,6 +970,276 @@ public class MainActivity extends Activity {
         return out.toString();
     }
 
+    // ---------- media panel: YouTube and Spotify inside the app ----------
+
+    private int dp(float v) { return Math.round(v * getResources().getDisplayMetrics().density); }
+
+    private void ensureMediaPanel() {
+        if (mediaBox != null) return;
+        mediaBox = new LinearLayout(this);
+        mediaBox.setOrientation(LinearLayout.VERTICAL);
+        mediaBox.setBackgroundColor(Color.parseColor("#0d1117"));
+        mediaBox.setVisibility(View.GONE);
+
+        LinearLayout bar = new LinearLayout(this);
+        bar.setOrientation(LinearLayout.HORIZONTAL);
+        bar.setGravity(Gravity.CENTER_VERTICAL);
+        bar.setPadding(dp(8), dp(6), dp(8), dp(6));
+        mediaBack = new Button(this);
+        mediaBack.setText("◀ Geri");
+        mediaBack.setAllCaps(false);
+        mediaBack.setVisibility(View.GONE);
+        mediaBack.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) { showPlayer(); }
+        });
+        mediaTitle = new TextView(this);
+        mediaTitle.setTextColor(Color.WHITE);
+        mediaTitle.setTextSize(15);
+        mediaTitle.setSingleLine(true);
+        mediaTitle.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        mediaTitle.setPadding(dp(8), 0, dp(8), 0);
+        Button close = new Button(this);
+        close.setText("✕ Kapat");
+        close.setAllCaps(false);
+        close.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) { closeMedia(); }
+        });
+        bar.addView(mediaBack, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        bar.addView(mediaTitle, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        bar.addView(close, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        mediaBox.addView(bar, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        mediaWeb = new WebView(this);
+        mediaWeb.setBackgroundColor(Color.parseColor("#0d1117"));
+        WebSettings ws = mediaWeb.getSettings();
+        ws.setJavaScriptEnabled(true);
+        ws.setDomStorageEnabled(true);
+        ws.setMediaPlaybackRequiresUserGesture(false);
+        ws.setSupportMultipleWindows(false);
+        CookieManager.getInstance().setAcceptCookie(true);
+        // The Spotify player sits in an iframe of our page; its login cookie is a third-party cookie there.
+        CookieManager.getInstance().setAcceptThirdPartyCookies(mediaWeb, true);
+        mediaWeb.setWebChromeClient(new WebChromeClient() {
+            @Override
+            public void onPermissionRequest(PermissionRequest request) {
+                for (String r : request.getResources()) {
+                    if (PermissionRequest.RESOURCE_PROTECTED_MEDIA_ID.equals(r)) { // Spotify full tracks use DRM (Widevine)
+                        request.grant(new String[]{PermissionRequest.RESOURCE_PROTECTED_MEDIA_ID});
+                        return;
+                    }
+                }
+                request.deny();
+            }
+
+            @Override
+            public void onShowCustomView(View view, CustomViewCallback cb) {
+                if (customView != null) { cb.onCustomViewHidden(); return; }
+                customView = view;
+                customViewCallback = cb;
+                root.addView(view, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+            }
+
+            @Override
+            public void onHideCustomView() { hideCustomView(); }
+        });
+        mediaWeb.setWebViewClient(new WebViewClient() {
+            @Override
+            public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest req) {
+                Uri u = req.getUrl();
+                String scheme = u.getScheme() == null ? "" : u.getScheme();
+                if ("spotify".equals(scheme) || "intent".equals(scheme)) { openSpotifyApp(u.toString()); return true; }
+                if (playerMode) return req.isForMainFrame(); // the child stays on the player; links out of it are blocked
+                String host = u.getHost() == null ? "" : u.getHost();
+                String[] ok = {"spotify.com", "spotifycdn.com", "scdn.co", "google.com", "gstatic.com", "recaptcha.net", "apple.com", "facebook.com", "hcaptcha.com"};
+                for (String o : ok) if (host.equals(o) || host.endsWith("." + o)) return false;
+                return true;
+            }
+
+            @Override
+            public void onPageFinished(WebView view, String url) {
+                if (playerMode && url != null && url.startsWith(PLAYER_BASE)) {
+                    playerLoaded = true;
+                    if (pendingMedia != null) { loadIntoPlayer(pendingMedia); pendingMedia = null; }
+                }
+            }
+        });
+        mediaWeb.addJavascriptInterface(new MediaBridge(), "Media");
+        mediaBox.addView(mediaWeb, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
+
+        int h = Math.round(getResources().getDisplayMetrics().heightPixels * 0.56f);
+        FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, h, Gravity.TOP);
+        root.addView(mediaBox, lp);
+    }
+
+    private void hideCustomView() {
+        if (customView == null) return;
+        root.removeView(customView);
+        customView = null;
+        if (customViewCallback != null) customViewCallback.onCustomViewHidden();
+        customViewCallback = null;
+    }
+
+    private String playerHtml() {
+        try {
+            File f = new File(WebAssets.dir(this), "player.html");
+            InputStream in = (WebAssets.downloadedVersion(this) > WebAssets.bundledVersion(this) && f.exists())
+                    ? new java.io.FileInputStream(f) : getAssets().open("player.html");
+            return readAll(in);
+        } catch (Exception e) {
+            return "<html><body style='background:#0d1117;color:#fff;font-family:sans-serif'>Oynatıcı yüklenemedi.</body></html>";
+        }
+    }
+
+    /** Shows the player page (loading it if needed) and plays `json` there. */
+    private void showPlayer() {
+        mediaBack.setVisibility(View.GONE);
+        if (!playerMode || !playerLoaded) {
+            playerMode = true;
+            playerLoaded = false;
+            if (pendingMedia == null) pendingMedia = lastMedia;
+            mediaWeb.loadDataWithBaseURL(PLAYER_BASE, playerHtml(), "text/html", "UTF-8", null);
+        }
+    }
+
+    private void loadIntoPlayer(String json) {
+        mediaWeb.evaluateJavascript("window.loadMedia&&loadMedia(" + json + ")", null);
+    }
+
+    /** kind: "youtube" or "spotify". Searches off the main thread, then plays the first result in the panel. */
+    private void openMedia(final String kind, final String query) {
+        ensureMediaPanel();
+        cancelListening();
+        stopAllSpeech();
+        final int seq = ++mediaSeq;
+        mediaBox.setVisibility(View.VISIBLE);
+        mediaTitle.setText(("spotify".equals(kind) ? "🎵 " : "▶️ ") + query + " aranıyor…");
+        if (!mediaOpen) { mediaOpen = true; }
+        js("onMediaOpen", kind, query);
+        showPlayer();
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                JSONArray items;
+                try {
+                    items = "spotify".equals(kind)
+                            ? MediaSearch.spotify(query, prefs.getString("spotifyClientId", ""), prefs.getString("spotifyClientSecret", ""))
+                            : MediaSearch.youtube(query);
+                } catch (Exception e) {
+                    items = new JSONArray();
+                }
+                String json;
+                try {
+                    json = new JSONObject().put("kind", kind).put("q", query).put("items", items).toString();
+                } catch (Exception e) {
+                    return;
+                }
+                final String j = json;
+                final int n = items.length();
+                main.post(new Runnable() {
+                    @Override
+                    public void run() {
+                        if (seq != mediaSeq || !mediaOpen) return;
+                        lastMedia = j;
+                        mediaTitle.setText(("spotify".equals(kind) ? "🎵 " : "▶️ ") + query);
+                        if (n == 0) js("onMediaFailed", "notfound");
+                        if (playerMode && playerLoaded) loadIntoPlayer(j);
+                        else { pendingMedia = j; showPlayer(); }
+                    }
+                });
+            }
+        }).start();
+    }
+
+    private void closeMedia() {
+        if (mediaBox == null || !mediaOpen) return;
+        hideCustomView();
+        mediaSeq++;
+        mediaOpen = false;
+        mediaWeb.evaluateJavascript("window.mediaStop&&mediaStop()", null);
+        mediaWeb.loadUrl("about:blank");
+        playerMode = false;
+        playerLoaded = false;
+        pendingMedia = null;
+        mediaBox.setVisibility(View.GONE);
+        js("onMediaClose");
+    }
+
+    private void openSpotifyApp(String uri) {
+        try {
+            Intent i;
+            if (uri.startsWith("intent:")) i = Intent.parseUri(uri, Intent.URI_INTENT_SCHEME);
+            else i = new Intent(Intent.ACTION_VIEW, Uri.parse(uri));
+            i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            startActivity(i);
+        } catch (Exception e) {
+            js("onHearingNote", "Spotify uygulaması bu telefonda yüklü değil gibi görünüyor.");
+        }
+    }
+
+    private void browseSpotify(String url) {
+        ensureMediaPanel();
+        if (!mediaOpen) { mediaOpen = true; mediaBox.setVisibility(View.VISIBLE); js("onMediaOpen", "spotify", ""); }
+        mediaWeb.evaluateJavascript("window.mediaPause&&mediaPause()", null);
+        playerMode = false;
+        playerLoaded = false;
+        mediaBack.setVisibility(View.VISIBLE);
+        mediaTitle.setText("Spotify");
+        mediaWeb.loadUrl(url);
+    }
+
+    @Override
+    public void onBackPressed() {
+        if (customView != null) { hideCustomView(); return; }
+        if (mediaOpen && !playerMode) { showPlayer(); return; }
+        if (mediaOpen) { closeMedia(); return; }
+        super.onBackPressed();
+    }
+
+    /** Called by player.html as window.Media.* */
+    public class MediaBridge {
+        @JavascriptInterface
+        public void close() {
+            main.post(new Runnable() { @Override public void run() { closeMedia(); } });
+        }
+
+        @JavascriptInterface
+        public void ended() { js("onMediaEnded"); }
+
+        @JavascriptInterface
+        public void playing(final String title) {
+            main.post(new Runnable() {
+                @Override public void run() { if (mediaTitle != null && title != null && !title.isEmpty()) mediaTitle.setText(title); }
+            });
+        }
+
+        @JavascriptInterface
+        public void failed(String why) { js("onMediaFailed", why); }
+
+        @JavascriptInterface
+        public void openSpotifyApp(final String uri) {
+            main.post(new Runnable() { @Override public void run() { MainActivity.this.openSpotifyApp(uri); } });
+        }
+
+        @JavascriptInterface
+        public void spotifyLogin() {
+            main.post(new Runnable() {
+                @Override public void run() { browseSpotify("https://accounts.spotify.com/tr/login?continue=https%3A%2F%2Fopen.spotify.com%2F"); }
+            });
+        }
+
+        @JavascriptInterface
+        public void spotifyWeb(final String q) {
+            main.post(new Runnable() {
+                @Override
+                public void run() {
+                    String url = "https://open.spotify.com/search/";
+                    try { url += java.net.URLEncoder.encode(q == null ? "" : q, "UTF-8").replace("+", "%20"); } catch (Exception ignored) { }
+                    browseSpotify(url);
+                }
+            });
+        }
+    }
+
     // ---------- updates from GitHub ----------
 
     /** Fetches newer web files in the background; the page decides when to reload (when it is idle). */
@@ -838,7 +1350,7 @@ public class MainActivity extends Activity {
         @JavascriptInterface
         public void stopListening() {
             main.post(new Runnable() {
-                @Override public void run() { if (recognizer != null) recognizer.cancel(); }
+                @Override public void run() { cancelListening(); }
             });
         }
 
@@ -919,6 +1431,7 @@ public class MainActivity extends Activity {
         public void set(String key, String value) {
             prefs.edit().putString(key, value).apply();
             cloudErrorShown = false;
+            if (key.endsWith("Key")) { cloudBackoffUntil = 0; pipeBad = false; }
             if ("botName".equals(key)) RobotWidget.refresh(MainActivity.this);
         }
 
@@ -1034,6 +1547,101 @@ public class MainActivity extends Activity {
             }
             Notices.schedule(MainActivity.this, json);
         }
+
+        // ---------- v3.0 (app 10) ----------
+
+        @JavascriptInterface
+        public void copyText(final String text) {
+            main.post(new Runnable() {
+                @Override
+                public void run() {
+                    android.content.ClipboardManager cm = (android.content.ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
+                    if (cm != null) cm.setPrimaryClip(android.content.ClipData.newPlainText("Pamuk yedeği", text));
+                }
+            });
+        }
+
+        @JavascriptInterface
+        public String pasteText() {
+            try {
+                android.content.ClipboardManager cm = (android.content.ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
+                if (cm == null || !cm.hasPrimaryClip() || cm.getPrimaryClip().getItemCount() == 0) return "";
+                CharSequence t = cm.getPrimaryClip().getItemAt(0).coerceToText(MainActivity.this);
+                return t == null ? "" : t.toString();
+            } catch (Exception e) {
+                return "";
+            }
+        }
+
+        @JavascriptInterface
+        public void setFloat(String key, String value) {
+            try { prefs.edit().putFloat(key, Float.parseFloat(value)).apply(); } catch (Exception ignored) { }
+        }
+
+        @JavascriptInterface
+        public String hearingEngine() {
+            Hearing.Engine e = cloudEngine();
+            return e == null ? "google" : e.kind;
+        }
+
+        @JavascriptInterface
+        public void pttStart(final String lang) {
+            main.post(new Runnable() {
+                @Override public void run() { startListening(lang == null || lang.isEmpty() ? "tr-TR" : lang, 1500, true); }
+            });
+        }
+
+        @JavascriptInterface
+        public void pttStop() {
+            main.post(new Runnable() { @Override public void run() { pttRelease(); } });
+        }
+
+        @JavascriptInterface
+        public void prefetchSpeech(final String text, final String lang, final String rateMul) {
+            prefetch(text, "en".equals(lang), parseFloatOr(rateMul, 1f));
+        }
+
+        @JavascriptInterface
+        public void openYoutube(final String q) {
+            main.post(new Runnable() { @Override public void run() { openMedia("youtube", q); } });
+        }
+
+        @JavascriptInterface
+        public void openSpotify(final String q) {
+            main.post(new Runnable() { @Override public void run() { openMedia("spotify", q); } });
+        }
+
+        @JavascriptInterface
+        public void closeMedia() {
+            main.post(new Runnable() { @Override public void run() { MainActivity.this.closeMedia(); } });
+        }
+
+        @JavascriptInterface
+        public boolean mediaIsOpen() { return mediaOpen; }
+
+        @JavascriptInterface
+        public void mediaPause() {
+            main.post(new Runnable() {
+                @Override public void run() { if (mediaWeb != null && mediaOpen) mediaWeb.evaluateJavascript("window.mediaPause&&mediaPause()", null); }
+            });
+        }
+
+        @JavascriptInterface
+        public void mediaResume() {
+            main.post(new Runnable() {
+                @Override public void run() { if (mediaWeb != null && mediaOpen && playerMode) mediaWeb.evaluateJavascript("window.mediaResume&&mediaResume()", null); }
+            });
+        }
+
+        @JavascriptInterface
+        public void spotifyLogin() {
+            main.post(new Runnable() {
+                @Override public void run() { browseSpotify("https://accounts.spotify.com/tr/login?continue=https%3A%2F%2Fopen.spotify.com%2F"); }
+            });
+        }
+
+        @JavascriptInterface
+        public int appVersion() { return WebAssets.appVersion(MainActivity.this); }
 
         @JavascriptInterface
         public boolean overlayOn() {
