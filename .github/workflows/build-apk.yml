@@ -10,6 +10,7 @@ on:
       - 'AndroidManifest.xml'
       - 'build.sh'
       - 'tools/**'
+      - 'assets/**'
       - '.github/workflows/build-apk.yml'
 
 permissions:

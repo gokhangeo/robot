@@ -126,7 +126,7 @@
   .thumb { width: 44px; height: 44px; border-radius: 10px; object-fit: cover; border: 2px solid var(--ring); display: none; }
   .thumb.show { display: block; }
   /* Two fixed rows, no sideways scrolling: a slightly moving finger used to scroll the row instead of pressing the button. */
-  .modes { display: grid; grid-template-columns: repeat(6, 1fr); gap: 5px; padding: 0 10px; max-width: 600px; margin: 0 auto; }
+  .modes { display: grid; grid-template-columns: repeat(7, 1fr); gap: 5px; padding: 0 10px; max-width: 600px; margin: 0 auto; }
   .mode { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; min-width: 0; min-height: 58px;
     padding: 7px 2px 6px; border-radius: 16px; border: 1px solid var(--pill-border); background: var(--pill); color: var(--text);
     font-size: 11px; font-weight: 700; white-space: nowrap; touch-action: manipulation; transition: transform .08s; overflow: hidden; }
@@ -407,6 +407,23 @@
   .celebrate b { display: block; font-size: 64px; }
   .celebrate span { font-size: 20px; font-weight: 800; }
   @keyframes celebrateIn { from { transform: scale(.3); opacity: 0 } }
+  /* v33: media panel (native, top 56% of the screen), push-to-talk, key prompt */
+  body.mediaOn { padding-top: 58vh; justify-content: flex-start; }
+  body.mediaOn .top, body.mediaOn .figure { display: none; }
+  body.mediaOn .bot { width: min(26vw, 19vh); }
+  body.mediaOn .name { display: none; }
+  body.mediaOn .bubble { margin-top: 6px; max-height: 9vh; font-size: 16px; min-height: 0; }
+  body.mediaOn .modes { display: none; }
+  .pttBtn { display: none; flex: 1; max-width: 330px; border: 0; border-radius: 999px; padding: 14px 18px; font: inherit; font-size: 17px; font-weight: 900;
+    background: linear-gradient(135deg, #ff6b9a, #ff922b); color: #fff; box-shadow: 0 5px 0 #c2255c; touch-action: none; user-select: none; -webkit-user-select: none; }
+  body.ptt .pttBtn { display: block; }
+  body.ptt .status .hint { display: none; }
+  .pttBtn.on { background: linear-gradient(135deg, #3ddba4, #20c997); box-shadow: 0 2px 0 #087f5b; transform: translateY(3px); }
+  .keyBox { background: rgba(61,219,164,.08); border: 1px solid rgba(61,219,164,.35); border-radius: 14px; padding: 10px 12px; margin-top: 8px; }
+  .keyBox b { color: #3ddba4; }
+  .searchRow { display: flex; gap: 8px; margin-top: 10px; }
+  .searchRow input { flex: 1; }
+  .quick { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
 </style>
 <script src="robot.js"></script>
 <script src="sfx.js"></script>
@@ -457,6 +474,7 @@
       <img class="thumb" id="thumb" alt="Ödev fotoğrafı">
       <button class="miniBtn" id="langBtn">🎤 English</button>
       <div class="hint" id="hint">Konuşmak için robota dokun</div>
+      <button class="pttBtn" id="pttBtn">🎤 Basılı tut, konuş</button>
       <button class="miniBtn" id="typeBtn" aria-label="Yazarak cevap ver">⌨️ Yaz</button>
     </div>
     <div class="modes" id="modes">
@@ -472,6 +490,8 @@
       <button class="mode" id="cam"><b>📷</b>Ödev</button>
       <button class="mode" id="arBtn"><b>📸</b>Kamera</button>
       <button class="mode" id="paintBtn"><b>🎨</b>Boyama</button>
+      <button class="mode" id="musicBtn"><b>🎵</b>Müzik</button>
+      <button class="mode" id="videoBtn"><b>▶️</b>Video</button>
     </div>
   </div>
 
@@ -655,6 +675,33 @@
     </div>
   </div>
 
+  <!-- music / video search -->
+  <div class="sheet" id="mediaSheet">
+    <div class="panel">
+      <h2 id="mediaSheetTitle">🎵 Müzik</h2>
+      <small id="mediaSheetInfo">Ne dinlemek istersin? Yaz ya da aşağıdan seç.</small>
+      <div class="searchRow"><input id="mediaQuery" placeholder="Şarkı ya da sanatçı adı" autocomplete="off" enterkeyhint="search"><button class="btn primary" id="mediaGo" style="flex:none;padding:12px 18px">Aç</button></div>
+      <div class="chips quick" id="mediaQuick"></div>
+      <div class="btns"><button class="btn ghost" data-close>Kapat</button></div>
+    </div>
+  </div>
+
+  <!-- first-run prompt: a better "ear" -->
+  <div class="sheet" id="earSheet">
+    <div class="panel">
+      <h2>👂 Pamuk daha iyi duysun mu?</h2>
+      <small>Telefonun kendi ses tanıması TV açıkken çok yanlış anlıyor ("Spotify aç" → "ağaç"). Ücretsiz bir anahtar girerseniz Pamuk çok daha iyi anlar. Birini girmeniz yeter (ebeveyn yapmalı):</small>
+      <div class="keyBox"><b>Deepgram (en iyi kulak)</b><small> · console.deepgram.com → ücretsiz kayıt (başlangıç kredisi verir) → API Keys → Create Key</small>
+        <input id="earDeepgram" type="password" placeholder="Deepgram anahtarı" autocomplete="off"></div>
+      <div class="keyBox"><b>Groq Whisper (ücretsiz)</b><small> · console.groq.com → API Keys</small>
+        <input id="earGroq" type="password" placeholder="gsk_..." autocomplete="off"></div>
+      <div class="keyBox"><b>Google Gemini (ücretsiz)</b><small> · aistudio.google.com → Get API key</small>
+        <input id="earGemini" type="password" placeholder="AIza..." autocomplete="off"></div>
+      <small>Anahtarlar sadece bu telefonda saklanır; sonradan Ebeveyn ayarları → Ses tanıma bölümünden değiştirebilirsiniz.</small>
+      <div class="btns"><button class="btn ghost" id="earLater">Şimdi değil</button><button class="btn primary" id="earSave">Kaydet</button></div>
+    </div>
+  </div>
+
   <!-- parent settings -->
   <div class="sheet" id="sheet">
     <div class="panel">
@@ -701,6 +748,26 @@
       <small>Robot sohbetlerde öğrendiği önemli şeyleri burada not eder (sevdiği şeyler, evcil hayvanı, zorlandığı dersler). İstemediğinizi silebilirsiniz.</small>
       <div id="memList"></div>
 
+      <h3>Ses tanıma (Pamuk'un kulağı)</h3>
+      <small>Bir anahtar girilirse Pamuk telefonun kendi ses tanıması yerine onu kullanır (öncelik: Deepgram → Groq → Gemini). Hiçbiri yoksa telefonun ses tanıması kullanılır. <span id="earNow"></span></small>
+      <label for="deepgramKey">Deepgram anahtarı (en iyi kulak)</label>
+      <input id="deepgramKey" type="password" autocomplete="off" placeholder="console.deepgram.com → API Keys">
+      <label for="groqKey">Groq anahtarı (ücretsiz, daha iyi anlama)</label>
+      <input id="groqKey" type="password" autocomplete="off" placeholder="gsk_... (console.groq.com)">
+      <label for="geminiKey">Google Gemini anahtarı (ücretsiz)</label>
+      <input id="geminiKey" type="password" autocomplete="off" placeholder="AIza... (aistudio.google.com)">
+      <div class="row">
+        <div><label for="geminiModel">Gemini modeli</label><input id="geminiModel" placeholder="gemini-3.5-flash-lite"></div>
+        <div><label for="deepgramModel">Deepgram modeli</label><input id="deepgramModel" placeholder="nova-3"></div>
+      </div>
+      <div class="row">
+        <div><label for="ptt">Konuşma şekli</label>
+          <select id="ptt"><option value="auto">Otomatik (TV açıkken bas-konuş)</option><option value="0">Dokun, konuş</option><option value="1">Basılı tut, konuş</option></select></div>
+        <div><label for="micEnhance">Gürültü filtreli mikrofon</label>
+          <select id="micEnhance"><option value="1">Açık</option><option value="0">Kapalı</option></select></div>
+      </div>
+      <small>"Basılı tut, konuş": robota ya da 🎤 tuşuna basılı tutarken konuşulur, bırakınca gönderilir; mikrofon asla kendiliğinden açılmaz, TV sesi tetikleyemez.</small>
+
       <h3>Ses</h3>
       <label>Ses tarzı</label>
       <div class="chips">
@@ -710,10 +777,20 @@
       </div>
       <label for="ttsProvider">Ses kaynağı</label>
       <select id="ttsProvider">
+        <option value="edge">Microsoft doğal ses (ücretsiz, önerilen)</option>
         <option value="phone">Telefonun sesi (ücretsiz)</option>
         <option value="eleven">ElevenLabs (en doğal, insan gibi)</option>
         <option value="google">Google Chirp 3 HD (çok doğal, aylık ücretsiz kota)</option>
       </select>
+      <div id="edgeBox">
+        <label for="edgeVoice">Doğal ses</label>
+        <select id="edgeVoice"><option value="tr-TR-EmelNeural">Emel · kadın (doğal yetişkin)</option><option value="tr-TR-AhmetNeural">Ahmet · erkek</option></select>
+        <div class="row">
+          <div><label for="edgeRate">Hız</label><input id="edgeRate" type="range" min="-30" max="30" step="5"></div>
+          <div><label for="edgePitch">Ses inceliği</label><input id="edgePitch" type="range" min="-20" max="20" step="2"></div>
+        </div>
+        <small>İnternet gerekir; bağlantı yoksa telefonun sesi kullanılır. Ücretsizdir, anahtar gerekmez.</small>
+      </div>
       <div id="phoneBox">
         <label for="voice">Türkçe ses</label>
         <select id="voice"></select>
@@ -730,7 +807,7 @@
           <div style="flex:1"><button class="btn ghost" id="loadVoices" style="padding:12px">Sesleri getir</button></div>
         </div>
       </div>
-      <div class="row">
+      <div class="row" id="phoneRateRow">
         <div><label for="rate">Konuşma hızı</label><input id="rate" type="range" min="0.6" max="1.5" step="0.05"></div>
         <div><label for="pitch">Ses inceliği</label><input id="pitch" type="range" min="0.6" max="2" step="0.05"></div>
       </div>
@@ -756,14 +833,24 @@
         Ana ekran widget'ı için: ana ekrana boş bir yere uzun basın → Widget'lar → Robot Arkadaşım.</small>
       <button class="link" id="battery">Robot yine de kapanıyorsa: pil kısıtlamasını kaldır</button>
 
+      <h3>Müzik ve video</h3>
+      <small>Pamuk'a "Spotify'dan ... aç" ya da "... videosunu aç" denebilir, ya da 🎵 Müzik / ▶️ Video tuşları kullanılır. Spotify'a giriş yapılırsa (Premium hesapla) şarkılar tam çalabilir; yoksa kısa önizleme çalar ve "Spotify uygulamasında aç" tuşu çıkar.</small>
+      <button class="link" id="spotifyLogin">Spotify'a giriş yap</button>
+      <div class="row">
+        <div><label for="spotifyClientId">Spotify Client ID (isteğe bağlı)</label><input id="spotifyClientId" autocomplete="off"></div>
+        <div><label for="spotifyClientSecret">Client Secret</label><input id="spotifyClientSecret" type="password" autocomplete="off"></div>
+      </div>
+      <small>Boş bırakılabilir. Girilirse (developer.spotify.com → Dashboard → Create app) şarkı araması daha isabetli olur.</small>
+
       <h3>Güncellemeler</h3>
       <small>Yeni özellikler internetten kendiliğinden gelir, APK'yı yeniden yüklemeniz gerekmez. <span id="versionInfo"></span></small>
       <button class="link" id="checkUpdate">Şimdi güncellemeleri kontrol et</button>
 
       <h3>Yedek</h3>
       <small>Uygulamayı silip yeniden kurmadan önce tüm ayarları, yıldızları, hafızayı, masalları ve API anahtarlarını tek bir metin olarak kopyalayın; bir yere (ör. kendinize e-posta veya not) yapıştırıp saklayın. Bu metin API anahtarlarını da içerir, kimseyle paylaşmayın.</small>
-      <button class="link" id="backupCopy">Yedeği kopyala</button>
+      <button class="link" id="backupCopy">Yedeği kopyala</button> &nbsp; <button class="link" id="backupPaste">Yedeği yapıştır</button>
       <textarea id="backupText" rows="5" readonly style="display:none;width:100%;margin-top:8px;padding:10px;font-size:12px;border-radius:12px;border:1px solid var(--pill-border);background:#10141a;color:var(--text);font-family:monospace;user-select:text;-webkit-user-select:text"></textarea>
+      <button class="btn primary" id="backupRestore" style="display:none;margin-top:8px">Bu yedeği geri yükle</button>
 
       <div class="btns">
         <button class="btn ghost" id="test">Sesi dene</button>
@@ -789,7 +876,11 @@
     takePhoto() {}, overlayOn() { return false; }, setOverlay() {}, setLook() {}, openBatterySettings() {},
     cameraSupported() { return true; }, savePhoto() { setTimeout(() => onPhotoSaved("Önizleme: kaydedildi"), 200); },
     reloadApp() { location.reload(); }, checkUpdate() { setTimeout(() => onUpdateResult("Tarayıcı önizlemesi"), 200); }, versionInfo() { return "önizleme"; },
-    loadCloudVoices(p) { setTimeout(() => onCloudVoices(JSON.stringify([{ id: "a", label: "Aoede · kadın · en doğal" }])), 300); }
+    loadCloudVoices(p) { setTimeout(() => onCloudVoices(JSON.stringify([{ id: "a", label: "Aoede · kadın · en doğal" }])), 300); },
+    copyText() {}, pasteText() { return ""; }, setFloat() {}, hearingEngine() { return "google"; }, appVersion() { return 10; },
+    pttStart() { this.listenWith(); }, pttStop() {}, prefetchSpeech() {}, spotifyLogin() {}, mediaIsOpen() { return false; },
+    openYoutube(q) { setTimeout(() => onMediaOpen("youtube", q), 100); }, openSpotify(q) { setTimeout(() => onMediaOpen("spotify", q), 100); },
+    closeMedia() { setTimeout(() => onMediaClose(), 50); }, mediaPause() {}, mediaResume() {}, scheduleNotices() {}
   };
 
   const $ = (id) => document.getElementById(id);
@@ -875,6 +966,10 @@
       tv: A.get("tvMode", "0") === "1"
     };
   }
+  // Push-to-talk: "1" always, "auto" (default) only while TV mode is on.
+  const pttOn = () => { const v = A.get("ptt", "auto"); return v === "1" || (v === "auto" && A.get("tvMode", "0") === "1"); };
+  let pttActive = false, turnPtt = false, pttPressAt = 0, mediaOn = false, mediaPausedByTalk = false, pendingMediaOpen = null;
+  function applyPttUi() { document.body.classList.toggle("ptt", pttOn()); }
 
   // ---------- system prompt ----------
   function systemPrompt() {
@@ -898,6 +993,7 @@ Genel kurallar:
 - [yıldız]: Gerçekten emek verdiğinde ekle (ödevde bir adımı doğru yapması, bir sayfa okuması, güzel bir İngilizce cümle kurması gibi). ${kid} bir yıldız kazanır. Her cevaba koyma; günde birkaç kez yeterli.
 - [hatırla: kısa not]: Onunla ilgili kalıcı ve önemli bir şey öğrenirsen ekle (sevdiği şeyler, evcil hayvanının adı, arkadaşlarının adları, zorlandığı veya sevdiği dersler, başarıları). Adres, okul adı, telefon, şifre, sağlık ya da aile içi özel konuları asla not etme. Zaten bildiğin şeyi tekrar not etme.
 - [duygu: X]: Her cevabının en başına o anki duygunu gösteren tek bir etiket koy; yüzün ve sesin buna göre değişir. X şunlardan biri: mutlu, heyecanlı, şaşkın, üzgün, düşünceli, utangaç, gururlu, sakin. Duygu cevabın ortasında değişirse (örneğin önce düşünüp sonra sevinirsen) oraya ikinci bir etiket koyabilirsin. Uyku masalında hep sakin kullan. Onun üzüldüğü bir şeyi anlatırken üzgün, başarısında gururlu ya da heyecanlı ol.
+- [YOUTUBE: arama sözcükleri]: Bir video, çizgi film, klip ya da YouTube'dan bir şey açmanı/göstermeni isterse ekle; uygulama YouTube'da arayıp ilk videoyu uygulamanın içinde açar. [SPOTIFY: arama sözcükleri]: Bir şarkı, müzik, çalma listesi ya da Spotify'dan bir şey çalmanı isterse ekle (şarkı/müzik isteğinde varsayılan Spotify; "video" ya da "YouTube" derse YOUTUBE). Arama sözcükleri kısa ve net olsun (örneğin [SPOTIFY: Tarkan Kuzu Kuzu], [YOUTUBE: Pepee yeni bölüm]); çocuğa uygun olmayan bir şey isterse açma, nazikçe başka bir şey öner. Etiketi cevabının en sonuna koy ve öncesinde sadece "Tamam, açıyorum!" gibi kısa bir cümle söyle. Ses tanıma bu kelimeleri sık bozar: "ağaç aç", "spotifay", "sipotifay" büyük olasılıkla "Spotify aç"; "yutup", "yu tüp", "yutub" büyük olasılıkla "YouTube" demektir.
 - [isim: YeniAd]: Senin adını değiştirmek isterse (örneğin "senin adın artık Pamuk olsun") yeni adı memnuniyetle kabul et ve bu etiketi ekle. Uygunsuz bir isim isterse nazikçe başka bir isim öner.`;
     if (c.fx && mode !== "story") p += `
 - Ses efektleri: ara sıra (en fazla bir iki tane) [kıkır] gülmek, [alkış] tebrik, [yaşasın] sevinç, [vay] şaşırma, [bipbip] robot sesi, [hmm] düşünmek için.`;
@@ -919,7 +1015,7 @@ ${rules}`;
 
 Ses tanıma:
 - ${kid}'in sözleri bir çocuğun sesinden otomatik ses tanımayla yazıya dökülüyor; kelimeler yanlış, eksik ya da bitişik yazılmış olabilir (örneğin benzer sesli başka kelimeler). Konuşmanın akışına bakarak en olası kastettiği şeyi tahmin et ve ona göre cevap ver; ses tanıma hatalarından bahsetme. Gerçekten hiç anlaşılmıyorsa kısa ve tatlı bir soruyla ne demek istediğini sor.`;
-    if (mode !== "read") p += `
+    if (mode !== "read" && !pttOn()) p += `
 - Yanında televizyon, radyo ya da konuşan yetişkinler olabilir ve mikrofon onları da duyabilir. Gelen metin açıkça sana ya da konuşmanıza yönelik değilse (televizyon dizisi veya haber cümlesi, reklam, şarkı sözü, yetişkinlerin kendi aralarındaki konuşması, konuyla hiç ilgisi olmayan yarım cümleler) hiçbir şey söyleme ve cevap olarak sadece [YOK] yaz. Emin değilsen ve ${kid}'in söylemiş olması mümkünse normal cevap ver.`;
     p += "\n\n" + MODE_PROMPTS[mode](c, kid);
     return p;
@@ -980,7 +1076,7 @@ Sınav konuları: ${examRun.exam.topics.join(", ")}.
     state = s;
     body.classList.remove("listening", "thinking", "speaking");
     if (s !== "idle") body.classList.add(s);
-    if (s !== "speaking") { stopMouth(); queue = []; afterSpeak = null; }
+    if (s !== "speaking") { stopMouth(); queue = []; afterSpeak = null; pendingMediaOpen = null; }
     if (s !== "listening") ring.style.transform = "";
     updateHint();
   }
@@ -1054,6 +1150,8 @@ Sınav konuları: ${examRun.exam.topics.join(", ")}.
     if (coStory && /^ba[şs]l[ıi]k\s*:/.test(low)) { coStory.title = after.trim().slice(0, 60); return; }
     if (coStory && /^resim\s*:/.test(low)) { coStory.cover = after.trim().slice(0, 24); return; }
     if (coStory && low === "son") { coStory.done = true; return; }
+    if (/^(youtube|yutup|yutub)\s*:/.test(low)) { const q = after.trim().slice(0, 100); if (q) steps.push({ media: "youtube", q }); return; }
+    if (/^(spotify|spotifay)\s*:/.test(low)) { const q = after.trim().slice(0, 100); if (q) steps.push({ media: "spotify", q }); return; }
     if (/^puan\s*:/.test(low)) { const st = mode === "exam" && examScored(after); if (st) steps.push(st); return; }
     if (low === "yıldız" || low === "yildiz") {
       steps.push({ star: 1, fromTag: true });
@@ -1100,19 +1198,27 @@ Sınav konuları: ${examRun.exam.topics.join(", ")}.
     } else if (step.mood) {
       if (window.Alive) Alive.mood(step.mood);
       nextStep();
+    } else if (step.media) {
+      pendingMediaOpen = { kind: step.media, q: step.q }; // opened once she has finished talking
+      nextStep();
     } else {
       const r = rateMul * (window.Alive ? Alive.rateFor() : 1);
       if (window.Alive) Alive.willSay(step.say, step.lang, r);
       A.speakWith(step.say, step.lang, String(r));
+      // The free voice synthesizes the next sentence while this one plays, so there is no gap between sentences.
+      const nx = queue.find((q) => q.say);
+      if (nx && A.prefetchSpeech) A.prefetchSpeech(nx.say, nx.lang, String(r));
     }
   }
   function finishSpeaking() {
-    const then = afterSpeak;
+    const then = afterSpeak, pm = pendingMediaOpen;
     setState("idle");
+    if (pm) return openMediaNow(pm.kind, pm.q);
     if (then) return then();
+    if (mediaOn && mediaPausedByTalk) { mediaPausedByTalk = false; A.mediaResume(); return; }
     const c = cfg();
     // At start-up (greetings, messages) the mic stays off until she taps or talks herself.
-    if (userEngaged && mode !== "story" && c.auto && !c.tv && autoTurns < 12 && !anySheetOpen()) {
+    if (userEngaged && mode !== "story" && c.auto && !c.tv && !pttOn() && !mediaOn && autoTurns < 12 && !anySheetOpen()) {
       autoTurns++;
       setTimeout(() => { if (state === "idle") listenNow(); }, 350);
     }
@@ -1122,6 +1228,8 @@ Sınav konuları: ${examRun.exam.topics.join(", ")}.
 
   function listenNow() {
     setSleeping(false);
+    if (pttOn()) { hint.textContent = "🎤 Basılı tutup konuş"; return; }
+    if (mediaOn) { A.mediaPause(); mediaPausedByTalk = true; }
     if (mode === "english") A.listenWith(englishMicTr ? "tr-TR" : "en-US", "2200");
     else if (mode === "read") A.listenWith("tr-TR", "4000");
     // Quiz answers get a longer pause allowance so "elli… altı" isn't cut in half.
@@ -1447,7 +1555,7 @@ Sınav konuları: ${examRun.exam.topics.join(", ")}.
   let lastPartial = "";
   // ---------- faster end of turn + background-noise gate ----------
   // In plain chat the turn ends as soon as the words stop changing (~750 ms) instead of waiting for the recognizer's own end.
-  const quickEndMode = () => !game && !riddle && !letters && (mode === "chat" || mode === "story");
+  const quickEndMode = () => !pttActive && !turnPtt && !game && !riddle && !letters && (mode === "chat" || mode === "story");
   let partialTimer = null, ignoreNativeUntil = 0, ignoredRow = 0;
   // Ambient level is taken in the first 300 ms; a turn whose loudest moment never rose clearly above it is treated as TV/background.
   let noise = null;
@@ -1480,7 +1588,7 @@ Sınav konuları: ${examRun.exam.topics.join(", ")}.
   function ignoreTurn() {
     setState("idle");
     const c = cfg();
-    if (userEngaged && c.auto && !c.tv && !anySheetOpen() && ignoredRow < 2) {
+    if (userEngaged && c.auto && !c.tv && !pttOn() && !mediaOn && !anySheetOpen() && ignoredRow < 2) {
       ignoredRow++;
       setTimeout(() => { if (state === "idle") listenNow(); }, 350);
     } else { ignoredRow = 0; updateHint(); }
@@ -1519,7 +1627,8 @@ Sınav konuları: ${examRun.exam.topics.join(", ")}.
     clearPartialTimer();
     // The recognizer sometimes gives up although it caught words along the way.
     if (state === "listening" && quickEndMode() && lastPartial.trim()) return window.onHeard(lastPartial);
-    setState("idle"); autoTurns = 0;
+    setState("idle"); autoTurns = 0; turnPtt = false;
+    if (mediaOn && mediaPausedByTalk) { mediaPausedByTalk = false; A.mediaResume(); }
     if (game) {
       if (game.q.done) return;
       // The recognizer sometimes gives up even though it caught something along the way.
@@ -1546,8 +1655,14 @@ Sınav konuları: ${examRun.exam.topics.join(", ")}.
     if (riddle) return riddleHeard(text);
     if (letters) return lettersHeard(text);
     // TV / far-away voices: the level never rose clearly above the room's background.
-    if (fromMic && mode !== "read" && soundsLikeBackground()) { noise = null; return ignoreTurn(); }
+    const wasPtt = turnPtt; turnPtt = false;
+    if (fromMic && !wasPtt && mode !== "read" && soundsLikeBackground()) { noise = null; return ignoreTurn(); }
     noise = null;
+    if (mediaOn && isStopWords(text)) { mediaPausedByTalk = false; A.closeMedia(); show(text, ""); return perform("Tamam, kapattım!", () => {}); }
+    if (mode === "chat" || mode === "story") {
+      const cmd = mediaCommand(text);
+      if (cmd) return runMediaCommand(cmd, text);
+    }
     heardFromMic = fromMic;
     if (coStory) coStory.lines.push({ by: "kid", t: text });
     if (mode === "chat") bump("chats");
@@ -1815,6 +1930,7 @@ Sınav konuları: ${examRun.exam.topics.join(", ")}.
   window.__tickle = () => { if (state === "idle") perform(pick(["[kıkır] Hihi, gıdıklanıyorum!", "[kıkır] Hahaha, dur dur, çok gıdıklanıyorum!", "[kıkır] Hihihi, bana gıdık yapma!"]), () => {}); };
   $("bot").addEventListener("click", () => {
     userEngaged = true;
+    if (Date.now() - pttPressAt < 2500) return; // that press was push-to-talk
     audio();
     if (party) { stopParty(); return; } // tapping the robot ends the dance
     if (body.classList.contains("sleeping")) {
@@ -3544,7 +3660,9 @@ Soru tarzı ve beklenen cevaplar: insanın vahye neden ihtiyaç duyduğu ve vahy
   };
   function showProvider() {
     const p = $("ttsProvider").value, cloud = CLOUD[p];
-    $("phoneBox").style.display = cloud ? "none" : "";
+    $("edgeBox").style.display = p === "edge" ? "" : "none";
+    $("phoneRateRow").style.display = p === "edge" ? "none" : "";
+    $("phoneBox").style.display = cloud || p === "edge" ? "none" : "";
     $("cloudBox").style.display = cloud ? "" : "none";
     if (!cloud) return;
     $("cloudKeyLabel").textContent = cloud.label;
@@ -3578,7 +3696,7 @@ Soru tarzı ve beklenen cevaplar: insanın vahye neden ihtiyaç duyduğu ve vahy
     sel.value = keep; if (!sel.value) sel.selectedIndex = 0;
   };
   window.onCloudVoicesError = (msg) => { $("loadVoices").textContent = "Sesleri getir"; alert(msg); };
-  window.onCloudTtsError = (msg) => show("", msg + " Şimdilik telefonun sesiyle konuşuyorum.");
+  window.onCloudTtsError = (msg, fb) => show("", msg + (fb === "edge" ? " Şimdilik ücretsiz doğal sesle konuşuyorum." : " Şimdilik telefonun sesiyle konuşuyorum."));
   $("ttsProvider").addEventListener("change", showProvider);
   $("loadVoices").addEventListener("click", () => {
     saveCloudFields();
@@ -3614,13 +3732,24 @@ Soru tarzı ve beklenen cevaplar: insanın vahye neden ihtiyaç duyduğu ve vahy
     $("overlay").value = A.overlayOn() ? "1" : "0";
     const [r, p, v] = A.getVoice().split(","); $("rate").value = r; $("pitch").value = p;
     fillVoices(v || "");
-    $("ttsProvider").value = A.get("ttsProvider", "phone");
+    $("ttsProvider").value = A.get("ttsProvider", "edge");
+    ["deepgramKey", "groqKey", "geminiKey", "geminiModel", "deepgramModel", "spotifyClientId", "spotifyClientSecret"].forEach((k) => ($(k).value = A.get(k, "")));
+    $("ptt").value = A.get("ptt", "auto"); $("micEnhance").value = A.get("micEnhance", "1");
+    $("edgeVoice").value = A.get("edgeVoice", "tr-TR-EmelNeural"); $("edgeRate").value = A.get("edgeRate", "0"); $("edgePitch").value = A.get("edgePitch", "0");
+    showEar();
     showProvider();
     renderMemories();
     $("versionInfo").textContent = "Sürüm: " + A.versionInfo();
     $("sheet").classList.add("open");
   }
+  function saveEdgeFields() { A.set("edgeVoice", $("edgeVoice").value); A.set("edgeRate", $("edgeRate").value); A.set("edgePitch", $("edgePitch").value); }
+  function showEar() {
+    const e = A.hearingEngine ? A.hearingEngine() : "google";
+    $("earNow").textContent = e === "google" ? "⚠️ Şu an telefonun kendi ses tanıması kullanılıyor; daha iyi anlaması için bir anahtar girin."
+      : "✅ Şu an kullanılan: " + { deepgram: "Deepgram", groq: "Groq Whisper", gemini: "Google Gemini" }[e] + ".";
+  }
   function testVoice() {
+    saveEdgeFields();
     A.setVoice($("rate").value, $("pitch").value, $("voice").value);
     saveCloudFields();
     A.speak(`Merhaba! Ben ${$("botName").value || "Pamuk"}. Seninle ders çalışmak çok eğlenceli olacak!`);
@@ -3640,6 +3769,10 @@ Soru tarzı ve beklenen cevaplar: insanın vahye neden ihtiyaç duyduğu ve vahy
     A.set("fx", $("fx").value);
     A.set("watch", $("watch").value);
     A.set("tvMode", $("tvMode").value);
+    ["deepgramKey", "groqKey", "geminiKey", "geminiModel", "deepgramModel", "spotifyClientId", "spotifyClientSecret"].forEach((k) => A.set(k, $(k).value.trim()));
+    A.set("ptt", $("ptt").value); A.set("micEnhance", $("micEnhance").value);
+    saveEdgeFields();
+    setTimeout(applyPttUi, 0);
     A.setVoice($("rate").value, $("pitch").value, $("voice").value);
     saveCloudFields();
     const wantOverlay = $("overlay").value === "1";
@@ -3660,6 +3793,7 @@ Soru tarzı ve beklenen cevaplar: insanın vahye neden ihtiyaç duyduğu ve vahy
     "auto", "fx", "watch", "tvMode", "ttsProvider", "cloudVoice", "cloudVoiceLabel", "cloudVoiceProvider", "elevenKey", "googleKey",
     "edgeVoice", "edgeRate", "edgePitch", "spotifyClientId", "spotifyClientSecret",
     "stats", "memories", "look", "care", "stories", "seenNotes", "remoteExams", "remoteRules", "examScores", "pendingRoutine",
+    "deepgramKey", "deepgramModel", "groqKey", "groqModel", "geminiKey", "geminiModel", "ptt", "micEnhance", "earAsked",
     "nameMig1", "gradeMig1", "lipPace", "recentTalk", "notices", "updateBase"];
   const NOKEY = "__yok__";
   function makeBackup() {
@@ -3680,6 +3814,170 @@ Soru tarzı ve beklenen cevaplar: insanın vahye neden ihtiyaç duyduğu ve vahy
     if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(() => { }, () => { });
     return ok;
   }
+  // ---------- restore ("Yedeği yapıştır") ----------
+  $("backupPaste").addEventListener("click", () => {
+    const ta = $("backupText");
+    ta.style.display = ""; ta.readOnly = false;
+    let clip = ""; try { clip = A.pasteText ? A.pasteText() : ""; } catch (e) { }
+    ta.value = clip && clip.includes("pamuk-robot") ? clip : "";
+    ta.placeholder = "Kaydettiğiniz yedek metnini buraya yapıştırın";
+    $("backupRestore").style.display = "";
+    if (!ta.value) ta.focus();
+  });
+  $("backupRestore").addEventListener("click", () => {
+    let b;
+    try { b = JSON.parse($("backupText").value.trim()); } catch (e) { return alert("Bu metin geçerli bir yedek değil. Yedeğin tamamını yapıştırdığınızdan emin olun."); }
+    if (!b || b.app !== "pamuk-robot" || !b.prefs) return alert("Bu metin bir Pamuk yedeği değil.");
+    if (!confirm("Yedek geri yüklensin mi? Bu telefondaki ayarların, yıldızların ve hafızanın yerine yedektekiler gelir.")) return;
+    Object.entries(b.prefs).forEach(([k, v]) => { if (typeof v === "string") A.set(k, v); });
+    // The free natural voice becomes the default unless a paid cloud voice was chosen.
+    if (!b.prefs.ttsProvider || b.prefs.ttsProvider === "phone") A.set("ttsProvider", "edge");
+    if (b.voice && b.voice.rate) A.setVoice(String(b.voice.rate), String(b.voice.pitch || "1.15"), b.voice.voice || "");
+    try { Object.entries(b.localStorage || {}).forEach(([k, v]) => localStorage.setItem(k, v)); } catch (e) { }
+    try { if (b.prefs.notices) A.scheduleNotices(b.prefs.notices); } catch (e) { }
+    if (b.overlay && !A.overlayOn() && confirm("Yedekte \"robot diğer uygulamaların üstünde gezsin\" açıktı. Şimdi açılsın mı? (izin ekranı açılabilir)")) A.setOverlay(true);
+    alert("Yedek geri yüklendi. Uygulama yeniden açılıyor.");
+    A.reloadApp();
+  });
+
+  // ---------- music and video (YouTube / Spotify panel) ----------
+  function openMediaNow(kind, q) {
+    q = String(q || "").trim();
+    if (!q) return openMediaSheet(kind);
+    mediaPausedByTalk = false;
+    if (kind === "spotify") A.openSpotify(q); else A.openYoutube(q);
+  }
+  window.onMediaOpen = (kind) => { mediaOn = true; document.body.classList.add("mediaOn"); if (state === "listening") { A.stopListening(); setState("idle"); } };
+  window.onMediaClose = () => { mediaOn = false; mediaPausedByTalk = false; document.body.classList.remove("mediaOn"); updateHint(); };
+  window.onMediaEnded = () => { if (state === "idle") show("", "Bitti! Listeden başka birini seçebilir ya da bana başka bir şey açtırabilirsin."); };
+  window.onMediaFailed = (why) => {
+    if (why === "notfound" && state === "idle") perform("Hmm, bunu bulamadım. Başka bir şey söyler misin?", () => {});
+  };
+  window.onHearingBusy = () => { if (state === "listening") hint.textContent = "Anlamaya çalışıyorum…"; };
+  window.onHearingNote = (msg) => show("", msg);
+
+  // Recognizers mishear these service names; a fuzzy match turns them into commands before the model is asked.
+  const SUF = "['’`]?[a-zçğıöşü]*";
+  const SPOT_RE = new RegExp("(?:^|\\s)(spotify|spotifay|spotifai|spotifi|spoti ?fay|spoti ?fai|spoti ?fy|sipotifay|sipotify|ispotifay|ispotify|spotfy|potifay|ağaç|ağac)" + SUF, "u");
+  const YT_RE = new RegExp("(?:^|\\s)(youtube|you ?tube|yutub|yutup|yutüp|yutube|yu ?tüp|yu ?tub|yu ?tup|yotube|yuutub|youtub|yutüb|yutuba)" + SUF, "u");
+  const ACT_RE = /(?:^|\s)(aç|ac|açar|açsana|açabilir|açıver|açın|aç bakalım|çal|çalar|çalsana|çalabilir|oynat|koy|başlat|göster|izlet|dinlet)\S*/u;
+  const FILLER = /(?:^|\s)(pamuk|lütfen|hadi|bana|bize|bir|şimdi|biraz|misin|mısın|musun|bakalım|istiyorum|isterim|dinlemek|izlemek|üzerinden|uygulamasından|uygulaması|de|da|den|dan|ten|tan|şarkısını|şarkısı|şarkıyı|şarkılarını|şarkıları|şarkı|müziğini|müziği|müzik|videosunu|videosu|videoyu|video)(?=\s|$)/gu;
+  function cleanQuery(q) {
+    const bot = (cfg().botName || "").toLocaleLowerCase("tr");
+    let t = " " + q + " ";
+    if (bot) t = t.split(" " + bot + " ").join(" ");
+    t = t.replace(ACT_RE, " ").replace(FILLER, " ").replace(FILLER, " ").replace(/\s+/g, " ").trim();
+    return t;
+  }
+  function mediaCommand(text) {
+    const t = " " + text.toLocaleLowerCase("tr").replace(/[.,!?;:"“”]/g, " ").replace(/\s+/g, " ").trim() + " ";
+    const words = t.trim().split(" ").length;
+    const act = ACT_RE.test(t);
+    let kind = null, m = t.match(YT_RE);
+    if (m) kind = "youtube";
+    else if ((m = t.match(SPOT_RE))) {
+      kind = "spotify";
+      // "ağaç" is a real word (tree): only "ağaç aç"-like short commands count as Spotify.
+      if (/^ağa[çc]/.test(m[1]) && (!/ağa[çc]\S*\s+(aç|ac|açar|çal)/u.test(t) || words > 6)) kind = null;
+    }
+    if (!kind) {
+      const v = t.match(/^\s*(.+?)\s+(videosunu|videosu|videoyu|videolarını|çizgi filmini|çizgi filmi)\s+(aç|ac|açar|açsana|oynat|göster|izlet)/u);
+      if (v) { const q = cleanQuery(v[1]); return q ? { kind: "youtube", q } : null; }
+      return null;
+    }
+    const q = cleanQuery(t.replace(kind === "youtube" ? YT_RE : SPOT_RE, " "));
+    if (!act && (q || words > 3)) return null; // just mentioned ("YouTube nedir?"), not asked: the model answers
+    return { kind, q };
+  }
+  function isStopWords(text) {
+    const t = text.toLocaleLowerCase("tr").replace(/[.,!?]/g, " ").trim();
+    return /^(pamuk\s+)?(kapat|durdur|dur|yeter|sus|bitir|kapa)\b/u.test(t) || /(videoyu|müziği|şarkıyı|youtube'?u|spotify'?ı)\s+(kapat|durdur|kapa)/u.test(t);
+  }
+  function runMediaCommand(cmd, text) {
+    pendingNote = null;
+    if (!cmd.q) {
+      show(text, "");
+      perform(cmd.kind === "spotify" ? "Hangi şarkıyı açayım? Yazabilir ya da söyleyebilirsin." : "Hangi videoyu açayım? Yazabilir ya da söyleyebilirsin.", () => openMediaSheet(cmd.kind));
+      return;
+    }
+    history.push({ role: "user", content: text }, { role: "assistant", content: `Tamam, açıyorum! [${cmd.kind === "spotify" ? "SPOTIFY" : "YOUTUBE"}: ${cmd.q}]` });
+    history = history.slice(-20);
+    show(text, (cmd.kind === "spotify" ? "🎵 " : "▶️ ") + cmd.q);
+    perform(`[duygu: heyecanlı] Tamam, ${cmd.kind === "spotify" ? "Spotify'da" : "YouTube'da"} ${cmd.q} açıyorum!`, () => openMediaNow(cmd.kind, cmd.q));
+  }
+  const QUICK = {
+    spotify: ["Çocuk şarkıları", "Disney şarkıları", "Ninniler", "Dans şarkıları", "Pepee şarkıları", "Türkçe pop"],
+    youtube: ["Pepee", "Ege ile Gaga", "Rafadan Tayfa", "Kral Şakir", "Bilim deneyleri", "Hayvan belgeseli"]
+  };
+  let mediaSheetKind = "spotify";
+  function openMediaSheet(kind) {
+    mediaSheetKind = kind;
+    A.stopSpeaking(); A.stopListening(); if (state !== "idle") setState("idle");
+    $("mediaSheetTitle").textContent = kind === "spotify" ? "🎵 Müzik (Spotify)" : "▶️ Video (YouTube)";
+    $("mediaSheetInfo").textContent = kind === "spotify" ? "Ne dinlemek istersin? Yaz ya da aşağıdan seç." : "Ne izlemek istersin? Yaz ya da aşağıdan seç.";
+    $("mediaQuery").value = "";
+    $("mediaQuery").placeholder = kind === "spotify" ? "Şarkı ya da sanatçı adı" : "Video ya da çizgi film adı";
+    const qk = $("mediaQuick"); qk.innerHTML = "";
+    QUICK[kind].forEach((t) => { const b = document.createElement("button"); b.className = "chip"; b.textContent = t; b.onclick = () => goMedia(t); qk.appendChild(b); });
+    $("mediaSheet").classList.add("open");
+  }
+  function goMedia(q) {
+    q = String(q || "").trim(); if (!q) return;
+    $("mediaSheet").classList.remove("open");
+    userEngaged = true;
+    openMediaNow(mediaSheetKind, q);
+  }
+  $("musicBtn").addEventListener("click", () => openMediaSheet("spotify"));
+  $("videoBtn").addEventListener("click", () => openMediaSheet("youtube"));
+  $("mediaGo").addEventListener("click", () => goMedia($("mediaQuery").value));
+  $("mediaQuery").addEventListener("keydown", (e) => { if (e.key === "Enter") goMedia($("mediaQuery").value); });
+  $("spotifyLogin").addEventListener("click", () => { $("sheet").classList.remove("open"); A.spotifyLogin(); });
+
+  // ---------- push-to-talk ("Basılı tut, konuş") ----------
+  function pttBegin(ev) {
+    if (!pttOn() || anySheetOpen()) return;
+    if (ev) ev.preventDefault();
+    userEngaged = true; pttPressAt = Date.now();
+    if (party) stopParty();
+    if (body.classList.contains("sleeping")) setSleeping(false);
+    A.stopSpeaking();
+    if (state !== "idle") setState("idle");
+    if (mediaOn) { A.mediaPause(); mediaPausedByTalk = true; }
+    pttActive = true; turnPtt = true; autoTurns = 0;
+    $("pttBtn").classList.add("on"); $("pttBtn").textContent = "🎙️ Dinliyorum… bırakınca gönderilir";
+    A.pttStart(mode === "english" && !englishMicTr ? "en-US" : "tr-TR");
+  }
+  function pttEnd() {
+    if (!pttActive) return;
+    pttActive = false; pttPressAt = Date.now();
+    $("pttBtn").classList.remove("on"); $("pttBtn").textContent = "🎤 Basılı tut, konuş";
+    A.pttStop();
+    if (state === "listening") hint.textContent = "Anlamaya çalışıyorum…";
+  }
+  $("pttBtn").addEventListener("pointerdown", pttBegin);
+  $("pttBtn").addEventListener("contextmenu", (e) => e.preventDefault());
+  $("bot").addEventListener("pointerdown", (e) => { if (pttOn()) pttBegin(e); });
+  addEventListener("pointerup", pttEnd);
+  addEventListener("pointercancel", pttEnd);
+  applyPttUi();
+
+  // ---------- first run: ask the parent for a better "ear" ----------
+  setTimeout(() => {
+    if (A.get("earAsked", "") === "1" || (A.hearingEngine && A.hearingEngine() !== "google") || anySheetOpen()) return;
+    $("earSheet").classList.add("open");
+  }, 7000);
+  $("earLater").addEventListener("click", () => { A.set("earAsked", "1"); $("earSheet").classList.remove("open"); });
+  $("earSave").addEventListener("click", () => {
+    const d = $("earDeepgram").value.trim(), g = $("earGroq").value.trim(), m = $("earGemini").value.trim();
+    if (d) A.set("deepgramKey", d);
+    if (g) A.set("groqKey", g);
+    if (m) A.set("geminiKey", m);
+    A.set("earAsked", "1");
+    $("earSheet").classList.remove("open");
+    show("", d || g || m ? "Teşekkürler! Artık seni çok daha iyi duyacağım. 👂" : "Tamam, sonra Ebeveyn ayarlarından ekleyebilirsiniz.");
+  });
+  ["edgeVoice"].forEach((id) => $(id).addEventListener("change", testVoice));
+
   $("backupCopy").addEventListener("click", () => {
     const text = makeBackup(), ta = $("backupText");
     ta.style.display = ""; ta.value = text;
